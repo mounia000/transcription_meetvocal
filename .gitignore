@@ -144,6 +144,17 @@ ENV/
 env.bak/
 venv.bak/
 
+# Fichiers audio
+*.wav
+*.mp3
+*.m4a
+backend/IA/audio/
+
+# Fichiers générés automatiquement
+*.pdf
+*.docx
+*.txt
+
 # Spyder project settings
 .spyderproject
 .spyproject
