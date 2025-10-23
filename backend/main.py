@@ -1,70 +1,70 @@
-# backend/main.py
-import os
-import platform
-import subprocess
-from IA.transcription import speach_to_text
-from IA.cleaning import clean_text
-from IA.resume import summarize_text_local
-from IA.save_pdf import save_files
+from fastapi import FastAPI, UploadFile, File, Depends
+from fastapi.responses import FileResponse
+from sqlalchemy.orm import Session
+from pathlib import Path
+import shutil
 
-def pipeline(audio_file: str):
-    """
-    Pipeline complet :
-    audio → transcription via Groq → nettoyage → résumé → sauvegarde PDF/Word
-    """
+from backend.DataBase.DB import Base, engine, SessionLocal
+from backend.DataBase import Models, repository
+from backend.IA import transcribe, summarize, make_pdf
 
-    # 1️⃣ Transcription brute
-    raw_text = speach_to_text(audio_file)
-    raw_file = "transcription_brute.txt"
-    with open(raw_file, "w", encoding="utf-8") as f:
-        f.write(raw_text)
-    print(f"✅ Transcription brute sauvegardée : {raw_file}")
+# Crée la base au démarrage
+Base.metadata.create_all(bind=engine)
 
-    # 2️⃣ Nettoyage
-    cleaned_text = clean_text(raw_text)
-    cleaned_file = "transcription_nettoyee.txt"
-    with open(cleaned_file, "w", encoding="utf-8") as f:
-        f.write(cleaned_text)
-    print(f"✅ Texte nettoyé sauvegardé : {cleaned_file}")
+app = FastAPI(title="MeetRecap API")
 
-    # 3️⃣ Résumé
-    summary = summarize_text_local(cleaned_text, max_length=150, min_length=50)
-    summary_file = "transcription_resume.txt"
-    with open(summary_file, "w", encoding="utf-8") as f:
-        f.write(summary)
-    print(f"✅ Résumé sauvegardé : {summary_file}")
+UPLOAD_DIR = Path("backend/uploads")
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-    # 4️⃣ Fichier final texte propre
-    final_file = "transcription_finale.txt"
-    with open(final_file, "w", encoding="utf-8") as f:
-        f.write(cleaned_text)
-    print(f"✅ Fichier final sauvegardé : {final_file}")
-
-    # 5️⃣ Génération PDF et Word
-    save_files(cleaned_text, base_name="transcription_finale")
-
-    # 6️⃣ Ouvrir le PDF automatiquement
-    pdf_file = "transcription_finale.pdf"
+# Dépendance DB
+def get_db():
+    db = SessionLocal()
     try:
-        if platform.system() == "Darwin":       # macOS
-            subprocess.call(["open", pdf_file])
-        elif platform.system() == "Linux":
-            subprocess.call(["xdg-open", pdf_file])
-        else:                                   # Windows
-            os.startfile(pdf_file)
-    except Exception as e:
-        print(f"⚠️ Impossible d'ouvrir le PDF automatiquement : {e}")
+        yield db
+    finally:
+        db.close()
 
+@app.post("/upload/")
+def upload_audio(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    file_path = UPLOAD_DIR / file.filename
+    base, ext = file.filename.rsplit(".", 1)
+    counter = 1
+    while file_path.exists():
+        new_name = f"{base}_{counter}.{ext}"
+        file_path = UPLOAD_DIR / new_name
+        counter += 1
 
-if __name__ == "__main__":
-    # Chemin relatif vers le fichier audio
-    base_dir = os.path.dirname(__file__)
-    audio_file = os.path.join(base_dir, "IA", "audio", "meet.m4a")
+    with open(file_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
 
-    print("📂 Chemin audio :", audio_file)
-    print("🟢 Fichier existe :", os.path.exists(audio_file))
+    audio = repository.create_audio(db, filename=file_path.name)
+    return {"id": audio.id, "filename": file_path.name, "status": "uploaded"}
 
-    if not os.path.exists(audio_file):
-        raise FileNotFoundError(f"Fichier audio introuvable : {audio_file}")
+@app.post("/process/{audio_id}")
+def process_audio(audio_id: int, db: Session = Depends(get_db)):
+    audio = repository.get_audio(db, audio_id)
+    if not audio:
+        return {"error": "Audio not found"}
 
-    pipeline(audio_file)
+    file_path = UPLOAD_DIR / audio.filename
+
+    transcription = transcribe.transcribe_file(file_path)
+    summary = summarize.summarize_text(transcription)
+    pdf_path = UPLOAD_DIR / f"{audio.filename}.pdf"
+    make_pdf.make_pdf(pdf_path, "Résumé de la réunion", summary, transcription)
+
+    repository.update_audio(
+        db, audio_id,
+        transcription=transcription,
+        summary=summary,
+        pdf_path=str(pdf_path),
+        status="done"
+    )
+    return {"message": "Traitement terminé", "pdf_path": str(pdf_path)}
+
+@app.get("/download/{audio_id}")
+def download_pdf(audio_id: int, db: Session = Depends(get_db)):
+    audio = repository.get_audio(db, audio_id)
+    if not audio or not audio.pdf_path:
+        return {"error": "PDF non trouvé"}
+    return FileResponse(audio.pdf_path, filename=Path(audio.pdf_path).name)
