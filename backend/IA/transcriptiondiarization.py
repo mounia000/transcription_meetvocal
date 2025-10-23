@@ -18,7 +18,7 @@ if not groq_api_key or not hf_token:
 
 # 3️⃣ Configuration de base
 base_dir = os.path.dirname(__file__)
-audio_path = os.path.join(base_dir, "audio", "meetvoc.m4a")
+audio_path = os.path.join(base_dir, "audio", "meet1.mp3")
 
 # 4️⃣ Conversion en WAV
 def convert_to_wav(audio_path):
@@ -38,7 +38,7 @@ def convert_to_wav(audio_path):
 wav_path = convert_to_wav(audio_path)
 print(f"✅ Fichier WAV prêt : {wav_path}")
 
-# 5️⃣ Charger le pipeline Pyannote
+# 5️⃣ Charger le pipeline Pyannote    
 print("⏳ Chargement du pipeline de diarisation (pyannote)...")
 pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization", use_auth_token=hf_token)
 print("✅ Pipeline chargé avec succès !")

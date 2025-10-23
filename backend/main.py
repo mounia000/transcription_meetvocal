@@ -59,7 +59,7 @@ def pipeline(audio_file: str):
 if __name__ == "__main__":
     # Chemin relatif vers le fichier audio
     base_dir = os.path.dirname(__file__)
-    audio_file = os.path.join(base_dir, "IA", "audio", "meetvoc.m4a")
+    audio_file = os.path.join(base_dir, "IA", "audio", "meet1.mp3")
 
     print("📂 Chemin audio :", audio_file)
     print("🟢 Fichier existe :", os.path.exists(audio_file))
