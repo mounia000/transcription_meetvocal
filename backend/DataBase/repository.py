@@ -1,15 +1,22 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, Float
-from sqlalchemy.sql import func
-from .DB import Base
+from sqlalchemy.orm import Session
+from . import Models
 
-class AudioFile(Base):
-    __tablename__ = "audio_files"
+def create_audio(db: Session, filename: str):
+    audio = models.AudioFile(filename=filename)
+    db.add(audio)
+    db.commit()
+    db.refresh(audio)
+    return audio
 
-    id = Column(Integer, primary_key=True, index=True)
-    filename = Column(String, index=True)
-    status = Column(String, default="uploaded")
-    transcription = Column(Text)
-    summary = Column(Text)
-    pdf_path = Column(String)
-    duration = Column(Float)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+def get_audio(db: Session, audio_id: int):
+    return db.query(models.AudioFile).filter(models.AudioFile.id == audio_id).first()
+
+def update_audio(db: Session, audio_id: int, **kwargs):
+    audio = get_audio(db, audio_id)
+    if not audio:
+        return None
+    for key, value in kwargs.items():
+        setattr(audio, key, value)
+    db.commit()
+    db.refresh(audio)
+    return audio

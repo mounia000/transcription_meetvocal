@@ -3,8 +3,7 @@ from sqlalchemy.sql import func
 from .DB import Base
 
 class AudioFile(Base):
-    __tablename__ = "audio_files"
-
+    __tablename__ = "audio_files" 
     id = Column(Integer, primary_key=True, index=True)
     filename = Column(String, index=True)
     status = Column(String, default="uploaded")
