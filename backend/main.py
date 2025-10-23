@@ -2,7 +2,7 @@
 import os
 import platform
 import subprocess
-from IA.transcription import speach_to_text
+from IA.transcriptiondiarization import transcription_with_diarization
 from IA.cleaning import clean_text
 from IA.resume import summarize_text_local
 from IA.save_pdf import save_files
@@ -10,11 +10,11 @@ from IA.save_pdf import save_files
 def pipeline(audio_file: str):
     """
     Pipeline complet :
-    audio → transcription via Groq → nettoyage → résumé → sauvegarde PDF/Word
+    audio → transcription + diarisation → nettoyage → résumé → sauvegarde PDF/Word
     """
 
-    # 1️⃣ Transcription brute
-    raw_text = speach_to_text(audio_file)
+    # 1️⃣ Transcription avec diarisation
+    raw_text = transcription_with_diarization(audio_file)
     raw_file = "transcription_brute.txt"
     with open(raw_file, "w", encoding="utf-8") as f:
         f.write(raw_text)
@@ -59,7 +59,7 @@ def pipeline(audio_file: str):
 if __name__ == "__main__":
     # Chemin relatif vers le fichier audio
     base_dir = os.path.dirname(__file__)
-    audio_file = os.path.join(base_dir, "IA", "audio", "meet.m4a")
+    audio_file = os.path.join(base_dir, "IA", "audio", "meetvoc.m4a")
 
     print("📂 Chemin audio :", audio_file)
     print("🟢 Fichier existe :", os.path.exists(audio_file))
