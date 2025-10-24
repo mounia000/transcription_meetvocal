@@ -6,7 +6,7 @@ def save_as_pdf(text, filename="transcription.pdf"):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", "B", 16)
-    pdf.cell(0, 10, "Transcription de la réunion", ln=True, align="C")
+    #pdf.cell(0, 10, "Transcription de la réunion", ln=True, align="C")
     pdf.ln(10)
     pdf.set_font("Arial", size=12)
     for paragraph in text.split("\n\n"):
