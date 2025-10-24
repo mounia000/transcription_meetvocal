@@ -75,16 +75,29 @@ def pipeline(audio_file: str):
     print("="*60)
     
     by_speaker = extract_by_speaker(transcription_complete)
+    speaker_summaries = {}
     
-    speaker_file = "transcription_par_locuteur.txt"
+    for speaker, text in by_speaker.items():
+        print(f"📝 Génération du résumé pour {speaker}...")
+        try:
+            # Nettoyer le texte du locuteur
+            cleaned_speaker_text = clean_text(text)
+            # Générer un résumé pour ce locuteur
+            speaker_summary = summarize_text_local(cleaned_speaker_text, max_length=100, min_length=30)
+            speaker_summaries[speaker] = speaker_summary
+        except Exception as e:
+            print(f"⚠️ Erreur résumé {speaker}: {e}")
+            speaker_summaries[speaker] = cleaned_speaker_text[:200] + "..."  # Fallback
+    
+    speaker_file = "résumé_par_locuteur.txt"
     with open(speaker_file, "w", encoding="utf-8") as f:
         for speaker, text in by_speaker.items():
             f.write(f"\n{'='*50}\n")
             f.write(f"{speaker}\n")
             f.write(f"{'='*50}\n")
             f.write(f"{text}\n")
-    print(f"✅ Texte organisé par locuteur : {speaker_file}")
-    print(f"👥 Nombre de locuteurs détectés : {len(by_speaker)}")
+    print(f"✅ Résumés par locuteur : {speaker_file}")
+    print(f"👥 Nombre de locuteurs : {len(by_speaker)}")
 
     # 6️⃣ Génération PDF et Word
     print("\n" + "="*60)
@@ -95,24 +108,28 @@ def pipeline(audio_file: str):
     final_content = f"""TRANSCRIPTION DE LA RÉUNION
 {'='*60}
 
-COMPTE RENDU (résumé)
+RESUME GENERAL
 {'-'*60}
 {summary}
 
 {'='*60}
 
+
+RÉSUMÉS PAR LOCUTEUR
+{'-'*60}
+"""
+
+    for speaker, speaker_summary in speaker_summaries.items():
+        final_content += f"\n{speaker}:\n{speaker_summary}\n\n"
+    
+    final_content += f"""
+{'='*60}
+
 TRANSCRIPTION COMPLÈTE (nettoyée)
 {'-'*60}
 {cleaned_text}
-
-{'='*60}
-
-DÉTAILS PAR LOCUTEUR
-{'-'*60}
 """
-    
-    for speaker, text in by_speaker.items():
-        final_content += f"\n{speaker}:\n{text}\n\n"
+
     
     save_files(final_content, base_name="transcription_finale")
 
