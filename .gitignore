@@ -216,3 +216,10 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# === Environnement ===
+.env
+.env.local
+/backend/.env
+/backend/backend/.env
+/frontend/.env
