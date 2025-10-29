@@ -1,26 +1,27 @@
-# ============================================================
-# 📁 backend/main.py
-# ============================================================
 
 import os
 import platform
 import subprocess
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+
+# Import IA Pipeline 
 from IA.transcriptiondiarization import transcription_with_diarization
 from IA.extractions import extract_pure_text, extract_by_speaker
 from IA.cleaning import clean_text
 from IA.resume import summarize_text_local
 from IA.save_pdf import save_files
 
+#  Import des routes d’authentification 
+from routes import auth
 
-# ============================================================
-# 1️⃣ Configuration de FastAPI
-# ============================================================
+
+# 1Configuration FastAPI
+
 
 app = FastAPI(title="MeetRecap Backend API")
 
-# 🔓 Autoriser ton frontend Vue (http://localhost:5173)
+# Autoriser le frontend local
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173"],  # ton front local
@@ -29,15 +30,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Route de test (pour vérifier la connexion front ↔ back)
+# Inclusion des routes d’authentification
+app.include_router(auth.router)
+
 @app.get("/")
 def root():
     return {"message": "🚀 Backend MeetRecap est bien en ligne !"}
 
 
-# ============================================================
-# 2️⃣ Fonction pipeline (inchangée, sauf petite adaptation)
-# ============================================================
+
+#2 Pipeline IA (inchangé)
+
 
 def pipeline(audio_file: str):
     """
@@ -45,7 +48,7 @@ def pipeline(audio_file: str):
     audio → transcription + diarisation → extraction texte pur → nettoyage → résumé → sauvegarde PDF/Word
     """
 
-    # 1️⃣ Transcription avec diarisation
+    # 1 Transcription avec diarisation
     print("\n" + "="*60)
     print("🎤 ÉTAPE 1 : TRANSCRIPTION + DIARISATION")
     print("="*60)
@@ -56,42 +59,28 @@ def pipeline(audio_file: str):
         f.write(transcription_complete)
     print(f"✅ Transcription complète : {raw_file}")
 
-    # 2️⃣ Extraction du texte pur
-    print("\n" + "="*60)
-    print("📝 ÉTAPE 2 : EXTRACTION DU TEXTE PUR")
-    print("="*60)
+    # 2 Extraction du texte pur
     pure_text = extract_pure_text(transcription_complete)
-
     pure_file = "transcription_texte_pur.txt"
     with open(pure_file, "w", encoding="utf-8") as f:
         f.write(pure_text)
     print(f"✅ Texte pur extrait : {pure_file}")
 
-    # 3️⃣ Nettoyage
-    print("\n" + "="*60)
-    print("🧹 ÉTAPE 3 : NETTOYAGE DU TEXTE")
-    print("="*60)
+    # 3 Nettoyage
     cleaned_text = clean_text(pure_text)
-
     cleaned_file = "transcription_nettoyee.txt"
     with open(cleaned_file, "w", encoding="utf-8") as f:
         f.write(cleaned_text)
     print(f"✅ Texte nettoyé : {cleaned_file}")
 
-    # 4️⃣ Résumé global
-    print("\n" + "="*60)
-    print("📋 ÉTAPE 4 : RÉSUMÉ GLOBAL")
-    print("="*60)
+    # 4 Résumé global
     try:
         summary = summarize_text_local(cleaned_text, max_length=150, min_length=50)
     except Exception as e:
         print(f"⚠️ Erreur résumé global : {e}")
         summary = cleaned_text
 
-    # 5️⃣ Résumés par locuteur
-    print("\n" + "="*60)
-    print("👥 ÉTAPE 5 : ORGANISATION PAR LOCUTEUR")
-    print("="*60)
+    # 5 Résumés par locuteur
     by_speaker = extract_by_speaker(transcription_complete)
     speaker_summaries = {}
 
@@ -104,7 +93,7 @@ def pipeline(audio_file: str):
             print(f"⚠️ Erreur résumé {speaker}: {e}")
             speaker_summaries[speaker] = text[:200] + "..."
 
-    # 6️⃣ Génération du contenu final
+    # 6Contenu final
     final_content = f"""TRANSCRIPTION DE LA RÉUNION
 {'='*60}
 
@@ -139,28 +128,23 @@ TRANSCRIPTION COMPLÈTE (nettoyée)
     }
 
 
-# ============================================================
-# 3️⃣ Nouvelle route : upload d’un fichier audio depuis le frontend
-# ============================================================
+
+#Nouvelle route API : upload audio
 
 @app.post("/upload")
 async def upload_audio(file: UploadFile = File(...)):
     """
-    Upload un fichier audio MP3 depuis le frontend et lance tout le pipeline.
+    Upload un fichier audio MP3 depuis le frontend et lance tout le pipeline IA.
     """
     try:
-        # Dossier audio
         audio_dir = os.path.join(os.path.dirname(__file__), "IA", "audio")
         os.makedirs(audio_dir, exist_ok=True)
 
-        # Enregistrer le fichier reçu
         file_path = os.path.join(audio_dir, file.filename)
         with open(file_path, "wb") as f:
             f.write(await file.read())
 
         print(f"✅ Fichier reçu et sauvegardé : {file_path}")
-
-        # Lancer le pipeline complet
         result = pipeline(file_path)
 
         return {
@@ -174,9 +158,9 @@ async def upload_audio(file: UploadFile = File(...)):
         return {"status": "error", "message": str(e)}
 
 
-# ============================================================
-# 4️⃣ Mode exécution directe (pour test terminal)
-# ============================================================
+
+#Lancement du serveur
+
 
 if __name__ == "__main__":
     import uvicorn
