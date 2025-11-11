@@ -1,70 +1,171 @@
-from fastapi import FastAPI, UploadFile, File, Depends
-from fastapi.responses import FileResponse
-from sqlalchemy.orm import Session
-from pathlib import Path
-import shutil
+# backend/main.py
+import os
+import platform
+import subprocess
+from backend.IA.transcriptiondiarization import transcription_with_diarization
+from backend.IA.extractions import extract_pure_text, extract_by_speaker
+from backend.IA.cleaning import clean_text
+from backend.IA.resume import summarize_text_local
+from backend.IA.save_pdf import save_files
 
-from backend.DataBase.DB import Base, engine, SessionLocal
-from backend.DataBase import Models, repository
-from backend.IA import transcribe, summarize, make_pdf
+def pipeline(audio_file: str):
+    """
+    Pipeline complet :
+    audio → transcription + diarisation → extraction texte pur → nettoyage → résumé → sauvegarde PDF/Word
+    """
 
-# Crée la base au démarrage
-Base.metadata.create_all(bind=engine)
+    # 1️⃣ Transcription avec diarisation (avec timestamps et speakers)
+    print("\n" + "="*60)
+    print("🎤 ÉTAPE 1 : TRANSCRIPTION + DIARISATION")
+    print("="*60)
+    
+    transcription_complete = transcription_with_diarization(audio_file)
+    
+    raw_file = "transcription_brute_avec_meta.txt"
+    with open(raw_file, "w", encoding="utf-8") as f:
+        f.write(transcription_complete)
+    print(f"✅ Transcription complète (avec timestamps/speakers) : {raw_file}")
 
-app = FastAPI(title="MeetRecap API")
+    # 2️⃣ Extraction du texte pur (sans timestamps ni speakers)
+    print("\n" + "="*60)
+    print("📝 ÉTAPE 2 : EXTRACTION DU TEXTE PUR")
+    print("="*60)
+    
+    pure_text = extract_pure_text(transcription_complete)
+    
+    pure_file = "transcription_texte_pur.txt"
+    with open(pure_file, "w", encoding="utf-8") as f:
+        f.write(pure_text)
+    print(f"✅ Texte pur extrait : {pure_file}")
+    print(f"📊 Longueur : {len(pure_text)} caractères, {len(pure_text.split())} mots")
 
-UPLOAD_DIR = Path("backend/uploads")
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    # 3️⃣ Nettoyage du texte
+    print("\n" + "="*60)
+    print("🧹 ÉTAPE 3 : NETTOYAGE DU TEXTE")
+    print("="*60)
+    
+    cleaned_text = clean_text(pure_text)
+    
+    cleaned_file = "transcription_nettoyee.txt"
+    with open(cleaned_file, "w", encoding="utf-8") as f:
+        f.write(cleaned_text)
+    print(f"✅ Texte nettoyé : {cleaned_file}")
+    print(f"📊 Réduction : {len(pure_text)} → {len(cleaned_text)} caractères")
 
-# Dépendance DB
-def get_db():
-    db = SessionLocal()
+    # 4️⃣ Résumé
+    print("\n" + "="*60)
+    print("📋 ÉTAPE 4 : GÉNÉRATION DU RÉSUMÉ")
+    print("="*60)
+    
     try:
-        yield db
-    finally:
-        db.close()
+        summary = summarize_text_local(cleaned_text, max_length=150, min_length=50)
+        
+        summary_file = "transcription_resume.txt"
+        with open(summary_file, "w", encoding="utf-8") as f:
+            f.write(summary)
+        print(f"✅ Résumé généré : {summary_file}")
+        print(f"📊 Longueur résumé : {len(summary)} caractères, {len(summary.split())} mots")
+    except Exception as e:
+        print(f"⚠️ Erreur lors de la génération du résumé : {e}")
+        summary = cleaned_text  # Fallback : utiliser le texte nettoyé
 
-@app.post("/upload/")
-def upload_audio(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    file_path = UPLOAD_DIR / file.filename
-    base, ext = file.filename.rsplit(".", 1)
-    counter = 1
-    while file_path.exists():
-        new_name = f"{base}_{counter}.{ext}"
-        file_path = UPLOAD_DIR / new_name
-        counter += 1
+    # 5️⃣ Organisation par locuteur (bonus)
+    print("\n" + "="*60)
+    print("👥 ÉTAPE 5 : ORGANISATION PAR LOCUTEUR")
+    print("="*60)
+    
+    by_speaker = extract_by_speaker(transcription_complete)
+    speaker_summaries = {}
+    
+    for speaker, text in by_speaker.items():
+        print(f"📝 Génération du résumé pour {speaker}...")
+        try:
+            # Nettoyer le texte du locuteur
+            cleaned_speaker_text = clean_text(text)
+            # Générer un résumé pour ce locuteur
+            speaker_summary = summarize_text_local(cleaned_speaker_text, max_length=100, min_length=30)
+            speaker_summaries[speaker] = speaker_summary
+        except Exception as e:
+            print(f"⚠️ Erreur résumé {speaker}: {e}")
+            speaker_summaries[speaker] = cleaned_speaker_text[:200] + "..."  # Fallback
+    
+    speaker_file = "résumé_par_locuteur.txt"
+    with open(speaker_file, "w", encoding="utf-8") as f:
+        for speaker, text in by_speaker.items():
+            f.write(f"\n{'='*50}\n")
+            f.write(f"{speaker}\n")
+            f.write(f"{'='*50}\n")
+            f.write(f"{text}\n")
+    print(f"✅ Résumés par locuteur : {speaker_file}")
+    print(f"👥 Nombre de locuteurs : {len(by_speaker)}")
 
-    with open(file_path, "wb") as f:
-        shutil.copyfileobj(file.file, f)
+    # 6️⃣ Génération PDF et Word
+    print("\n" + "="*60)
+    print("📄 ÉTAPE 6 : GÉNÉRATION PDF/WORD")
+    print("="*60)
+    
+    # Créer un document final combinant tout
+    final_content = f"""TRANSCRIPTION DE LA RÉUNION
+{'='*60}
 
-    audio = repository.create_audio(db, filename=file_path.name)
-    return {"id": audio.id, "filename": file_path.name, "status": "uploaded"}
+RESUME GENERAL
+{'-'*60}
+{summary}
 
-@app.post("/process/{audio_id}")
-def process_audio(audio_id: int, db: Session = Depends(get_db)):
-    audio = repository.get_audio(db, audio_id)
-    if not audio:
-        return {"error": "Audio not found"}
+{'='*60}
 
-    file_path = UPLOAD_DIR / audio.filename
 
-    transcription = transcribe.transcribe_file(file_path)
-    summary = summarize.summarize_text(transcription)
-    pdf_path = UPLOAD_DIR / f"{audio.filename}.pdf"
-    make_pdf.make_pdf(pdf_path, "Résumé de la réunion", summary, transcription)
+RÉSUMÉS PAR LOCUTEUR
+{'-'*60}
+"""
 
-    repository.update_audio(
-        db, audio_id,
-        transcription=transcription,
-        summary=summary,
-        pdf_path=str(pdf_path),
-        status="done"
-    )
-    return {"message": "Traitement terminé", "pdf_path": str(pdf_path)}
+    for speaker, speaker_summary in speaker_summaries.items():
+        final_content += f"\n{speaker}:\n{speaker_summary}\n\n"
+    
+    final_content += f"""
+{'='*60}
 
-@app.get("/download/{audio_id}")
-def download_pdf(audio_id: int, db: Session = Depends(get_db)):
-    audio = repository.get_audio(db, audio_id)
-    if not audio or not audio.pdf_path:
-        return {"error": "PDF non trouvé"}
-    return FileResponse(audio.pdf_path, filename=Path(audio.pdf_path).name)
+TRANSCRIPTION COMPLÈTE (nettoyée)
+{'-'*60}
+{cleaned_text}
+"""
+
+    
+    save_files(final_content, base_name="transcription_finale")
+
+    # 7️⃣ Ouvrir le PDF automatiquement
+    print("\n" + "="*60)
+    print("🎉 TRAITEMENT TERMINÉ")
+    print("="*60)
+    
+    pdf_file = "transcription_finale.pdf"
+    try:
+        if platform.system() == "Darwin":       # macOS
+            subprocess.call(["open", pdf_file])
+        elif platform.system() == "Linux":
+            subprocess.call(["xdg-open", pdf_file])
+        else:                                   # Windows
+            os.startfile(pdf_file)
+        print(f"📂 PDF ouvert : {pdf_file}")
+    except Exception as e:
+        print(f"⚠️ Impossible d'ouvrir le PDF automatiquement : {e}")
+    
+    print("\n✨ Tous les fichiers ont été générés avec succès !")
+    print(f"📁 Dossier de sortie : {os.getcwd()}")
+
+
+if __name__ == "__main__":
+    # Chemin relatif vers le fichier audio
+    base_dir = os.path.dirname(__file__)
+    audio_file = os.path.join(base_dir, "IA", "audio", "meet1.mp3")
+
+    print("🚀 DÉMARRAGE DU PIPELINE DE TRANSCRIPTION")
+    print("="*60)
+    print(f"📂 Chemin audio : {audio_file}")
+    print(f"🟢 Fichier existe : {os.path.exists(audio_file)}")
+    print("="*60)
+
+    if not os.path.exists(audio_file):
+        raise FileNotFoundError(f"❌ Fichier audio introuvable : {audio_file}")
+
+    pipeline(audio_file)
