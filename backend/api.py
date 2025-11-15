@@ -1,19 +1,31 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, File, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from backend.DataBase import models, schemas, crud
 from backend.DataBase import database
-
 from backend.DataBase.database import SessionLocal, engine
 import os
+import shutil
 
-# Keep existing IA pipeline available
-from .main import pipeline as existing_pipeline  # original pipeline function; left unchanged
+from .main import pipeline as existing_pipeline
 
 models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Transcription MeetVocal API (FastAPI port)")
 
-# Dependency to get DB session
+# CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Créer le dossier uploads s'il n'existe pas
+UPLOAD_DIR = "backend/IA/audio/uploads"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
 def get_db():
     db = SessionLocal()
     try:
@@ -21,7 +33,6 @@ def get_db():
     finally:
         db.close()
 
-# Simple healthcheck
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -65,13 +76,66 @@ def create_summary(meeting_id: int, summary: schemas.SummarizeCreate, db: Sessio
 def get_summaries(meeting_id: int, db: Session = Depends(get_db)):
     return crud.get_summaries_for_meeting(db, meeting_id)
 
-# Endpoint to trigger existing AI pipeline on an uploaded audio file path
+# 🆕 NOUVEAU : Upload de fichier audio
+@app.post("/upload-audio/")
+async def upload_audio(file: UploadFile = File(...)):
+    """Upload un fichier audio depuis le PC de l'utilisateur"""
+    try:
+        # Vérifier le type de fichier
+        allowed_extensions = ['.mp3', '.wav', '.m4a', '.ogg', '.flac']
+        file_ext = os.path.splitext(file.filename)[1].lower()
+        
+        if file_ext not in allowed_extensions:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Type de fichier non supporté. Utilisez: {', '.join(allowed_extensions)}"
+            )
+        
+        # Créer un nom de fichier unique
+        import time
+        timestamp = int(time.time())
+        safe_filename = f"{timestamp}_{file.filename}"
+        file_path = os.path.join(UPLOAD_DIR, safe_filename)
+        
+        # Sauvegarder le fichier
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        
+        return {
+            "status": "success",
+            "message": "Fichier uploadé avec succès",
+            "filename": safe_filename,
+            "path": file_path
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# 🆕 MODIFIÉ : Pipeline avec upload
+@app.post("/pipeline-upload/")
+async def run_pipeline_upload(file: UploadFile = File(...)):
+    """Upload un fichier et lance directement le pipeline"""
+    try:
+        # Upload du fichier
+        upload_result = await upload_audio(file)
+        audio_path = upload_result["path"]
+        
+        # Lancer le pipeline
+        existing_pipeline(audio_path)
+        
+        return {
+            "status": "pipeline started",
+            "audio": audio_path,
+            "filename": upload_result["filename"]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Ancien endpoint (gardé pour compatibilité)
 @app.post("/pipeline/")
 def run_pipeline(audio_path: str):
-    """Run the original pipeline from backend/main.py. The function is kept unchanged."""
+    """Run the original pipeline from backend/main.py"""
     try:
         existing_pipeline(audio_path)
         return {"status": "pipeline started", "audio": audio_path}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
