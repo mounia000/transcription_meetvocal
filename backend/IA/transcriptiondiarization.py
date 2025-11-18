@@ -18,7 +18,7 @@ if not groq_api_key or not hf_token:
 
 # 3️⃣ Configuration de base
 base_dir = os.path.dirname(__file__)
-audio_path = os.path.join(base_dir, "audio", "meet1.mp3")
+audio_path = os.path.join(base_dir, "audio", "meet2.m4a")
 
 # 4️⃣ Conversion en WAV
 def convert_to_wav(audio_path):
@@ -51,23 +51,48 @@ def format_time(seconds):
 
 # 7️⃣ Fusion diarisation + transcription avec timestamps
 def match_speaker_to_text(diar_segments, text_segments):
+    """
+    Associe chaque segment de texte au speaker correspondant.
+    Remplace UNKNOWN par le speaker le plus proche dans le temps.
+    """
     result = []
+    
+    # Créer un mapping des speakers détectés
+    detected_speakers = sorted(set(d["speaker"] for d in diar_segments))
+    
     for txt in text_segments:
         start = txt["start"]
         end = txt["end"]
         text = txt["text"].strip()
 
         # Trouver le locuteur le plus probable
-        speaker = "UNKNOWN"
+        speaker = None
+        min_distance = float('inf')
+        
+        # Chercher le speaker qui couvre ce timestamp
         for d in diar_segments:
-            if d["start"] <= start <= d["end"]:
+            # Si le segment est dans la plage du speaker
+            if d["start"] <= start <= d["end"] or d["start"] <= end <= d["end"]:
                 speaker = d["speaker"]
                 break
+            
+            # Sinon, trouver le speaker le plus proche
+            distance = min(abs(d["start"] - start), abs(d["end"] - end))
+            if distance < min_distance:
+                min_distance = distance
+                speaker = d["speaker"]
+        
+        # Si aucun speaker trouvé, utiliser le premier détecté
+        if not speaker and detected_speakers:
+            speaker = detected_speakers[0]
+        elif not speaker:
+            speaker = "SPEAKER_00"
 
         # Ajout du timestamp formaté
         start_f = format_time(start)
         end_f = format_time(end)
         result.append(f"[{start_f} - {end_f}] [{speaker}] {text}")
+    
     return result
 
 # 8️⃣ Fonction principale
@@ -86,6 +111,12 @@ def transcription_with_diarization(audio_file=None):
     print("🎧 Détection des intervenants...")
     diarization = pipeline(wav_path)
     segments = [{"start": t.start, "end": t.end, "speaker": s} for t, _, s in diarization.itertracks(yield_label=True)]
+    
+    # DEBUG : Voir les speakers détectés
+    print("🔍 Speakers détectés par Pyannote:")
+    for seg in segments:
+        print(f"  - {seg['speaker']}: {seg['start']:.1f}s → {seg['end']:.1f}s")
+    
     print(f"👥 Intervenants détectés : {set(seg['speaker'] for seg in segments)}")
 
     # Transcription Groq
