@@ -157,6 +157,8 @@ venv.bak/
 *.pdf
 *.docx
 *.txt
+# Autoriser requirements.txt
+!requirements.txt
 
 # Spyder project settings
 .spyderproject
