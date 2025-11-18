@@ -150,7 +150,7 @@ venv.bak/
 *.m4a
 # ... sauf dans ce dossier
 !backend/IA/audio/
-!backend/IA/audio//**/*
+!backend/IA/audio/**
 
 
 # Fichiers générés automatiquement
