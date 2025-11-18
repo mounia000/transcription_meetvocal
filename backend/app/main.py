@@ -254,9 +254,8 @@ def upload(
     ⏳ Traitement : 5-15 minutes selon la taille du fichier
     
     Retourne :
-    - Transcription complète avec timestamps
-    - Résumé général de la réunion
-    - Résumés par participant (speakers)
+    compte rendu bien structuré avec trasncription
+    
     """
     
     # Vérifier utilisateur avec le token
