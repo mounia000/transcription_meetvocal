@@ -1,0 +1,31 @@
+# API Framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+
+# Database
+sqlalchemy==2.0.23
+psycopg2-binary==2.9.9
+alembic==1.12.1
+
+# Authentication
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+
+# Environment & Config
+python-dotenv==1.0.0
+pydantic[email]==2.5.0
+
+# IA Dependencies (already installed)
+groq==0.4.0
+pyannote.audio==3.1.1
+transformers==4.35.2
+torch==2.1.1
+torchaudio==2.1.1
+
+# Document Generation
+fpdf==1.7.2
+python-docx==1.1.0
+
+# Audio Processing
+ffmpeg-python==0.2.0
