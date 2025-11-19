@@ -144,16 +144,21 @@ ENV/
 env.bak/
 venv.bak/
 
-# Fichiers audio
+# Fichiers audio # Ignorer les fichiers audio partout...
 *.wav
 *.mp3
 *.m4a
-backend/IA/audio/
+# ... sauf dans ce dossier
+!backend/IA/audio/
+!backend/IA/audio/**
+
 
 # Fichiers générés automatiquement
 *.pdf
 *.docx
 *.txt
+# Autoriser requirements.txt
+!requirements.txt
 
 # Spyder project settings
 .spyderproject
