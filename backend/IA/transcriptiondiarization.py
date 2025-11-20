@@ -5,6 +5,9 @@ from dotenv import load_dotenv
 from groq import Groq
 from pyannote.audio import Pipeline
 
+# Déclaration du pipeline en global
+pipeline = None
+
 # 1️⃣ Charger les variables d'environnement
 load_dotenv()
 print("✅ Clés API chargées correctement.")
@@ -16,9 +19,14 @@ hf_token = os.getenv("HUGGINGFACE_TOKEN")
 if not groq_api_key or not hf_token:
     raise ValueError("❌ Clés API manquantes (Groq ou Hugging Face)")
 
-# 3️⃣ Configuration de base
-base_dir = os.path.dirname(__file__)
-audio_path = os.path.join(base_dir, "audio", "meet2.m4a")
+# 3️⃣ Charger le pipeline Pyannote (global)
+try:
+    print("⏳ Chargement du pipeline de diarisation (pyannote)...")
+    pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization", use_auth_token=hf_token)
+    print("✅ Pipeline chargé avec succès !")
+except Exception as e:
+    print(f"⚠️ Erreur lors du chargement du pipeline Pyannote : {e}")
+    pipeline = None
 
 # 4️⃣ Conversion en WAV
 def convert_to_wav(audio_path):
@@ -35,92 +43,60 @@ def convert_to_wav(audio_path):
         ], check=True)
     return wav_path
 
-wav_path = convert_to_wav(audio_path)
-print(f"✅ Fichier WAV prêt : {wav_path}")
-
-# 5️⃣ Charger le pipeline Pyannote    
-print("⏳ Chargement du pipeline de diarisation (pyannote)...")
-pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization", use_auth_token=hf_token)
-print("✅ Pipeline chargé avec succès !")
-
-# 6️⃣ Fonction utilitaire pour formater le temps en mm:ss.s
+# 5️⃣ Formater le temps
 def format_time(seconds):
     minutes = int(seconds // 60)
     secs = seconds % 60
     return f"{minutes:02d}:{secs:04.1f}"
 
-# 7️⃣ Fusion diarisation + transcription avec timestamps
+# 6️⃣ Associer les segments texte ↔ locuteurs
 def match_speaker_to_text(diar_segments, text_segments):
-    """
-    Associe chaque segment de texte au speaker correspondant.
-    Remplace UNKNOWN par le speaker le plus proche dans le temps.
-    """
     result = []
-    
-    # Créer un mapping des speakers détectés
     detected_speakers = sorted(set(d["speaker"] for d in diar_segments))
-    
     for txt in text_segments:
-        start = txt["start"]
-        end = txt["end"]
-        text = txt["text"].strip()
-
-        # Trouver le locuteur le plus probable
+        start, end, text = txt["start"], txt["end"], txt["text"].strip()
         speaker = None
         min_distance = float('inf')
-        
-        # Chercher le speaker qui couvre ce timestamp
         for d in diar_segments:
-            # Si le segment est dans la plage du speaker
             if d["start"] <= start <= d["end"] or d["start"] <= end <= d["end"]:
                 speaker = d["speaker"]
                 break
-            
-            # Sinon, trouver le speaker le plus proche
             distance = min(abs(d["start"] - start), abs(d["end"] - end))
             if distance < min_distance:
                 min_distance = distance
                 speaker = d["speaker"]
-        
-        # Si aucun speaker trouvé, utiliser le premier détecté
-        if not speaker and detected_speakers:
-            speaker = detected_speakers[0]
-        elif not speaker:
-            speaker = "SPEAKER_00"
-
-        # Ajout du timestamp formaté
-        start_f = format_time(start)
-        end_f = format_time(end)
+        if not speaker:
+            speaker = detected_speakers[0] if detected_speakers else "SPEAKER_00"
+        start_f, end_f = format_time(start), format_time(end)
         result.append(f"[{start_f} - {end_f}] [{speaker}] {text}")
-    
     return result
 
-# 8️⃣ Fonction principale
+# 7️⃣ Transcription + Diarisation principale
 def transcription_with_diarization(audio_file=None):
-    """
-    Retourne le texte complet avec diarisation et timestamps.
-    Si audio_file est fourni, on l'utilise à la place du fichier par défaut.
-    """
-    global audio_path, wav_path
+    global pipeline  # <<----- 🔥 IMPORTANT
 
+    if not pipeline:
+        raise RuntimeError("❌ Le pipeline Pyannote n'est pas initialisé.")
+
+    base_dir = os.path.dirname(__file__)
     if audio_file:
         audio_path = audio_file
-        wav_path = convert_to_wav(audio_path)
+    else:
+        audio_path = os.path.join(base_dir, "audio", "reunion_projet_meetrecap.m4a")
 
-    # Diarisation
+    wav_path = convert_to_wav(audio_path)
+
+    # 🔹 Étape 1 : Diarisation
     print("🎧 Détection des intervenants...")
     diarization = pipeline(wav_path)
-    segments = [{"start": t.start, "end": t.end, "speaker": s} for t, _, s in diarization.itertracks(yield_label=True)]
-    
-    # DEBUG : Voir les speakers détectés
-    print("🔍 Speakers détectés par Pyannote:")
-    for seg in segments:
-        print(f"  - {seg['speaker']}: {seg['start']:.1f}s → {seg['end']:.1f}s")
-    
+    segments = [
+        {"start": t.start, "end": t.end, "speaker": s}
+        for t, _, s in diarization.itertracks(yield_label=True)
+    ]
     print(f"👥 Intervenants détectés : {set(seg['speaker'] for seg in segments)}")
 
-    # Transcription Groq
-    print("\n🎙️ Lancement de la transcription complète (Groq)...")
+    # 🔹 Étape 2 : Transcription
+    print("\n🎙️ Transcription complète (Groq)...")
     client = Groq(api_key=groq_api_key)
     with open(wav_path, "rb") as file:
         transcription = client.audio.transcriptions.create(
@@ -131,13 +107,12 @@ def transcription_with_diarization(audio_file=None):
             language="fr"
         )
 
+    # 🔹 Étape 3 : Fusion
     fusion = match_speaker_to_text(segments, transcription.segments)
 
-    # Sauvegarde dans un fichier texte
     output_path = os.path.join(base_dir, "transcription_avec_diarisation.txt")
     with open(output_path, "w", encoding="utf-8") as f:
         f.write("\n".join(fusion))
-    print(f"\n✅ Transcription avec timestamps enregistrée ici : {output_path}\n")
 
-    # Retour du texte fusionné
+    print(f"\n✅ Transcription enregistrée ici : {output_path}")
     return "\n".join(fusion)
