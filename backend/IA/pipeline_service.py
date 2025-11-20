@@ -42,9 +42,9 @@ class TranscriptionPipeline:
             Dict contenant tous les résultats du pipeline
         """
         
-        # 1️⃣ Transcription avec diarisation
+        # Transcription avec diarisation
         print("\n" + "="*60)
-        print("🎤 ÉTAPE 1 : TRANSCRIPTION + DIARISATION")
+        print("ÉTAPE 1 : TRANSCRIPTION + DIARISATION")
         print("="*60)
         
         self.raw_transcription = transcription_with_diarization(self.audio_file)
@@ -53,11 +53,11 @@ class TranscriptionPipeline:
             raw_file = os.path.join(self.output_dir, "transcription_brute_avec_meta.txt")
             with open(raw_file, "w", encoding="utf-8") as f:
                 f.write(self.raw_transcription)
-            print(f"✅ Transcription complète sauvegardée : {raw_file}")
+            print(f"Transcription complète sauvegardée : {raw_file}")
         
-        # 2️⃣ Extraction du texte pur
+        #  Extraction du texte pur
         print("\n" + "="*60)
-        print("📝 ÉTAPE 2 : EXTRACTION DU TEXTE PUR")
+        print("ÉTAPE 2 : EXTRACTION DU TEXTE PUR")
         print("="*60)
         
         self.pure_text = extract_pure_text(self.raw_transcription)
@@ -66,13 +66,13 @@ class TranscriptionPipeline:
             pure_file = os.path.join(self.output_dir, "transcription_texte_pur.txt")
             with open(pure_file, "w", encoding="utf-8") as f:
                 f.write(self.pure_text)
-            print(f"✅ Texte pur extrait : {pure_file}")
+            print(f"Texte pur extrait : {pure_file}")
         
-        print(f"📊 Longueur : {len(self.pure_text)} caractères, {len(self.pure_text.split())} mots")
+        print(f"Longueur : {len(self.pure_text)} caractères, {len(self.pure_text.split())} mots")
         
-        # 3️⃣ Nettoyage du texte
+        # Nettoyage du texte
         print("\n" + "="*60)
-        print("🧹 ÉTAPE 3 : NETTOYAGE DU TEXTE")
+        print("ÉTAPE 3 : NETTOYAGE DU TEXTE")
         print("="*60)
         
         self.cleaned_text = clean_text(self.pure_text)
@@ -81,17 +81,17 @@ class TranscriptionPipeline:
             cleaned_file = os.path.join(self.output_dir, "transcription_nettoyee.txt")
             with open(cleaned_file, "w", encoding="utf-8") as f:
                 f.write(self.cleaned_text)
-            print(f"✅ Texte nettoyé : {cleaned_file}")
+            print(f"Texte nettoyé : {cleaned_file}")
         
-        print(f"📊 Réduction : {len(self.pure_text)} → {len(self.cleaned_text)} caractères")
+        print(f"Réduction : {len(self.pure_text)} → {len(self.cleaned_text)} caractères")
         
-        # 4️⃣ Résumé
+        # Résumé
         print("\n" + "="*60)
-        print("📋 ÉTAPE 4 : GÉNÉRATION DU RÉSUMÉ")
+        print("ÉTAPE 4 : GÉNÉRATION DU RÉSUMÉ")
         print("="*60)
         
         try:
-            print("📋 Génération du compte-rendu structuré...")
+            print("Génération du compte-rendu structuré...")
             compte_rendu_data = generate_compte_rendu(
             self.cleaned_text, 
             self.speaker_summaries
@@ -99,7 +99,7 @@ class TranscriptionPipeline:
             self.summary = compte_rendu_data["compte_rendu_complet"]
             self.resume_court = compte_rendu_data["resume_court"]
         except Exception as e:
-            print(f"⚠️ Erreur génération compte-rendu: {e}")
+            print(f"Erreur génération compte-rendu: {e}")
             self.summary = self.cleaned_text[:500] + "..."
             self.resume_court = self.summary
         
@@ -112,13 +112,13 @@ class TranscriptionPipeline:
         self.num_speakers = len(self.by_speaker)
         
         for speaker, text in self.by_speaker.items():
-            print(f"📝 Génération du résumé pour {speaker}...")
+            print(f"Génération du résumé pour {speaker}...")
             try:
                 cleaned_speaker_text = clean_text(text)
                 speaker_summary = summarize_text_local(cleaned_speaker_text, max_length=100, min_length=30)
                 self.speaker_summaries[speaker] = speaker_summary
             except Exception as e:
-                print(f"⚠️ Erreur résumé {speaker}: {e}")
+                print(f"Erreur résumé {speaker}: {e}")
                 cleaned_speaker_text = clean_text(text)
                 self.speaker_summaries[speaker] = cleaned_speaker_text[:200] + "..."
         
@@ -130,11 +130,11 @@ class TranscriptionPipeline:
                     f.write(f"{speaker}\n")
                     f.write(f"{'='*50}\n")
                     f.write(f"{text}\n")
-            print(f"✅ Résumés par locuteur : {speaker_file}")
+            print(f"Résumés par locuteur : {speaker_file}")
         
-        print(f"👥 Nombre de locuteurs : {self.num_speakers}")
+        print(f"Nombre de locuteurs : {self.num_speakers}")
         
-        # 6️⃣ Génération PDF et Word
+        # Génération PDF et Word
         print("\n" + "="*60)
         print("📄 ÉTAPE 6 : GÉNÉRATION PDF/WORD")
         print("="*60)
@@ -148,10 +148,10 @@ class TranscriptionPipeline:
         self.docx_path = f"{base_name}.docx"
         
         print("\n" + "="*60)
-        print("🎉 TRAITEMENT TERMINÉ")
+        print("TRAITEMENT TERMINÉ")
         print("="*60)
-        print(f"✨ Tous les fichiers ont été générés avec succès !")
-        print(f"📂 Dossier de sortie : {self.output_dir}")
+        print(f"Tous les fichiers ont été générés avec succès !")
+        print(f"Dossier de sortie : {self.output_dir}")
         
         return self.get_results()
     
