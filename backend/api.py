@@ -7,7 +7,8 @@ from backend.DataBase.database import SessionLocal, engine
 import os
 import shutil
 
-from .main import pipeline as existing_pipeline
+#from .main import pipeline as existing_pipeline
+from .pipeline_service import run_pipeline_service
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -48,13 +49,13 @@ def list_users(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
     return crud.get_users(db, skip=skip, limit=limit)
 
 # Meetings
-@app.post("/meetings/", response_model=schemas.MeetingRead)
-def create_meeting(meeting: schemas.MeetingCreate, db: Session = Depends(get_db)):
-    return crud.create_meeting(db, meeting)
+@app.post("/meetings/", response_model=schemas.AudioFileRead)
+def create_meeting(meeting: schemas.AudioFileCreate, db: Session = Depends(get_db)):
+    return crud.create_audio_file(db, meeting)
 
-@app.get("/meetings/", response_model=list[schemas.MeetingRead])
+@app.get("/meetings/", response_model=list[schemas.AudioFileRead])
 def list_meetings(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    return crud.get_meetings(db, skip=skip, limit=limit)
+    return crud.get_audio_files(db, skip=skip, limit=limit)
 
 # Transcription segments
 @app.post("/segments/", response_model=schemas.TranscriptionSegmentRead)
@@ -76,7 +77,7 @@ def create_summary(meeting_id: int, summary: schemas.SummarizeCreate, db: Sessio
 def get_summaries(meeting_id: int, db: Session = Depends(get_db)):
     return crud.get_summaries_for_meeting(db, meeting_id)
 
-# 🆕 NOUVEAU : Upload de fichier audio
+# 🆕 Upload de fichier audio
 @app.post("/upload-audio/")
 async def upload_audio(file: UploadFile = File(...)):
     """Upload un fichier audio depuis le PC de l'utilisateur"""
@@ -110,32 +111,30 @@ async def upload_audio(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# 🆕 MODIFIÉ : Pipeline avec upload
+# 🆕Pipeline avec upload
 @app.post("/pipeline-upload/")
 async def run_pipeline_upload(file: UploadFile = File(...)):
-    """Upload un fichier et lance directement le pipeline"""
     try:
-        # Upload du fichier
         upload_result = await upload_audio(file)
         audio_path = upload_result["path"]
-        
-        # Lancer le pipeline
-        existing_pipeline(audio_path)
-        
+
+        result = run_pipeline_service(audio_path)
+
         return {
-            "status": "pipeline started",
+            "status": "success",
             "audio": audio_path,
-            "filename": upload_result["filename"]
+            "pipeline_result": result
         }
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# Ancien endpoint (gardé pour compatibilité)
+
 @app.post("/pipeline/")
 def run_pipeline(audio_path: str):
     """Run the original pipeline from backend/main.py"""
     try:
-        existing_pipeline(audio_path)
+        run_pipeline_service(audio_path)
         return {"status": "pipeline started", "audio": audio_path}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

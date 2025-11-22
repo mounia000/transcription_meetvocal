@@ -1,50 +1,76 @@
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey, Text
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey, Text,Float,TIMESTAMP
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from .database import Base
+from sqlalchemy.sql import func
 
-class User(Base):
-    __tablename__ = "users"
-    id = Column(Integer, primary_key=True, index=True)
-    full_name = Column(String(256), nullable=False)
-    email = Column(String(256), unique=True, index=True, nullable=False)
-    hashed_password = Column(String(512), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
 
-    meetings = relationship("Meeting", back_populates="owner")
 
-class Meeting(Base):
-    __tablename__ = "meeting"
-    id = Column(Integer, primary_key=True, index=True)
-    title = Column(String(512), nullable=False)
-    description = Column(Text, nullable=True)
-    start_time = Column(DateTime, nullable=True)
-    end_time = Column(DateTime, nullable=True)
-    owner_id = Column(Integer, ForeignKey("users.id"))
-    created_at = Column(DateTime, default=datetime.utcnow)
+# ================================
+# Table Utilisateurs
+# ================================
+class Utilisateur(Base):
+    __tablename__ = "utilisateurs"
 
-    owner = relationship("User", back_populates="meetings")
-    transcription_segments = relationship("TranscriptionSegment", back_populates="meeting")
-    summaries = relationship("Summarize", back_populates="meeting")
+    id_user = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), nullable=False)
+    email = Column(String(255), nullable=False, unique=True)
+    password = Column(String(255), nullable=False)
 
-class TranscriptionSegment(Base):
-    __tablename__ = "transcription_segment"
-    id = Column(Integer, primary_key=True, index=True)
-    meeting_id = Column(Integer, ForeignKey("meeting.id"))
-    speaker = Column(String(128), nullable=True)
-    start_time = Column(String(64), nullable=True)
-    end_time = Column(String(64), nullable=True)
-    text = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    fichiers_audio = relationship("FichierAudio", back_populates="user", cascade="all, delete")
 
-    meeting = relationship("Meeting", back_populates="transcription_segments")
 
-class Summarize(Base):
-    __tablename__ = "summarize"
-    id = Column(Integer, primary_key=True, index=True)
-    meeting_id = Column(Integer, ForeignKey("meeting.id"))
-    summary_text = Column(Text, nullable=True)
-    by_ai = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+# ================================
+# Table Fichiers_Audio
+# ================================
+class FichierAudio(Base):
+    __tablename__ = "fichiers_audio"
 
-    meeting = relationship("Meeting", back_populates="summaries")
+    id_audio = Column(Integer, primary_key=True, index=True)
+    id_user = Column(Integer, ForeignKey("utilisateurs.id_user", ondelete="CASCADE"), nullable=False)
+
+    title = Column(String(255), nullable=False)
+    status = Column(String(20), default="pending")
+    file_path = Column(String(500), nullable=False)
+
+    num_speakers = Column(Integer)
+    duration = Column(Float)
+    date_upload = Column(TIMESTAMP, server_default=func.now())
+
+    user = relationship("Utilisateur", back_populates="fichiers_audio")
+    transcriptions = relationship("Transcription", back_populates="audio", cascade="all, delete")
+    resumes = relationship("Resume", back_populates="audio", cascade="all, delete")
+
+
+# ================================
+# Table Transcriptions
+# ================================
+class Transcription(Base):
+    __tablename__ = "transcriptions"
+
+    id_transcription = Column(Integer, primary_key=True, index=True)
+    id_audio = Column(Integer, ForeignKey("fichiers_audio.id_audio", ondelete="CASCADE"), nullable=False)
+
+    text_brut = Column(Text, nullable=False)
+    start_time = Column(Float, nullable=False)
+    end_time = Column(Float, nullable=False)
+    speaker = Column(String(50))
+    sequence_number = Column(Integer, nullable=False)  # IMPORTANT pour l’ordre !
+
+    audio = relationship("FichierAudio", back_populates="transcriptions")
+
+
+# ================================
+# Table Résumés
+# ================================
+class Resume(Base):
+    __tablename__ = "resumes"
+
+    id_resume = Column(Integer, primary_key=True, index=True)
+    id_audio = Column(Integer, ForeignKey("fichiers_audio.id_audio", ondelete="CASCADE"), nullable=False)
+
+    summary_text = Column(Text, nullable=False)
+    type_resume = Column(String(50), nullable=False)  # general | par_speaker
+    speaker = Column(String(50))  # utilisé seulement si type_resume='par_speaker'
+
+    audio = relationship("FichierAudio", back_populates="resumes")

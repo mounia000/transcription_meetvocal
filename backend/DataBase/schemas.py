@@ -1,70 +1,55 @@
-from pydantic import BaseModel, EmailStr
-from typing import Optional, List
-from datetime import datetime
+from pydantic import BaseModel, Field
+from typing import Optional
 
+# ================================
+# UTILISATEURS
+# ================================
+# Users
 class UserCreate(BaseModel):
-    full_name: str
-    email: EmailStr
-    hashed_password: Optional[str] = None
+    name: str
+    email: str
+    password: str
 
 class UserRead(BaseModel):
-    id: int
-    full_name: str
-    email: EmailStr
-    created_at: Optional[datetime]
+    id_user: int
+    name: str
+    email: str
 
-    class Config:
-        orm_mode = True
+    model_config = {"from_attributes": True}
 
-class MeetingCreate(BaseModel):
+# Audio files (Meetings)
+class AudioFileCreate(BaseModel):
+    id_user: int
     title: str
-    description: Optional[str] = None
-    start_time: Optional[datetime] = None
-    end_time: Optional[datetime] = None
-    owner_id: Optional[int] = None
+    status: str = "pending"
+    file_path: str
+    num_speakers: Optional[int] = None
+    duration: Optional[float] = None
 
-class MeetingRead(BaseModel):
-    id: int
-    title: str
-    description: Optional[str]
-    start_time: Optional[datetime]
-    end_time: Optional[datetime]
-    owner_id: Optional[int]
-    created_at: Optional[datetime]
+class AudioFileRead(AudioFileCreate):
+    id_audio: int
+    model_config = {"from_attributes": True}
 
-    class Config:
-        orm_mode = True
-
+# Transcription segments
 class TranscriptionSegmentCreate(BaseModel):
-    meeting_id: int
+    id_audio: int
+    text_brut: str
+    start_time: float
+    end_time: float
     speaker: Optional[str] = None
-    start_time: Optional[str] = None
-    end_time: Optional[str] = None
-    text: Optional[str] = None
+    sequence_number: int
 
-class TranscriptionSegmentRead(BaseModel):
-    id: int
-    meeting_id: int
-    speaker: Optional[str]
-    start_time: Optional[str]
-    end_time: Optional[str]
-    text: Optional[str]
-    created_at: Optional[datetime]
+class TranscriptionSegmentRead(TranscriptionSegmentCreate):
+    id_transcription: int
+    model_config = {"from_attributes": True}
 
-    class Config:
-        orm_mode = True
-
+# Summaries
 class SummarizeCreate(BaseModel):
-    meeting_id: int
-    summary_text: Optional[str] = None
-    by_ai: Optional[bool] = True
+    id_audio: int
+    summary_text: str
+    type_resume: str
+    speaker: Optional[str] = None
 
-class SummarizeRead(BaseModel):
-    id: int
-    meeting_id: int
-    summary_text: Optional[str]
-    by_ai: bool
-    created_at: Optional[datetime]
-
-    class Config:
-        orm_mode = True
+class SummarizeRead(SummarizeCreate):
+    id_resume: int
+    model_config = {"from_attributes": True}
