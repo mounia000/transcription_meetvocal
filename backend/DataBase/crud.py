@@ -1,10 +1,6 @@
-
 from sqlalchemy.orm import Session
 from . import models, schemas
 
-# ================================
-# UTILISATEURS
-# ================================
 def create_user(db: Session, user: schemas.UserCreate):
     db_user = models.Utilisateur(
         name=user.name,
@@ -16,75 +12,52 @@ def create_user(db: Session, user: schemas.UserCreate):
     db.refresh(db_user)
     return db_user
 
-def get_users(db: Session, skip: int = 0, limit: int = 100):
-    return db.query(models.Utilisateur).offset(skip).limit(limit).all()
 
-# ================================
-# FICHIERS AUDIO / MEETINGS
-# ================================
-def create_audio_file(db: Session, audio_file: schemas.AudioFileCreate):
-    db_file = models.FichierAudio(
-        id_user=audio_file.id_user,
-        title=audio_file.title,
-        status=audio_file.status,
-        file_path=audio_file.file_path,
-        num_speakers=audio_file.num_speakers,
-        duration=audio_file.duration
+def get_user_by_email(db: Session, email: str):
+    return db.query(models.Utilisateur).filter(models.Utilisateur.email == email).first()
+
+
+# ============================================================
+# FICHIERS AUDIO
+# ============================================================
+
+def create_audio_file(db: Session, audio: schemas.AudioFileCreate):
+    db_audio = models.FichierAudio(
+        id_user=audio.id_user,
+        title=audio.title,
+        file_path=audio.file_path,
+        status=audio.status,
+        num_speakers=audio.num_speakers,
+        duration=audio.duration
     )
-    db.add(db_file)
+    db.add(db_audio)
     db.commit()
-    db.refresh(db_file)
-    return db_file
+    db.refresh(db_audio)
+    return db_audio
 
-def get_audio_files(db: Session, skip: int = 0, limit: int = 100):
-    return db.query(models.FichierAudio).offset(skip).limit(limit).all()
 
-def get_audio_file(db: Session, file_id: int):
-    return db.query(models.FichierAudio).filter(models.FichierAudio.id_audio == file_id).first()
+def get_audio_file_by_id(db: Session, id_audio: int):
+    return db.query(models.FichierAudio).filter(models.FichierAudio.id_audio == id_audio).first()
 
-# ================================
-# TRANSCRIPTIONS
-# ================================
-def create_segment(db: Session, seg: schemas.TranscriptionSegmentCreate):
-    db_seg = models.Transcription(
-        id_audio=seg.id_audio,
-        text_brut=seg.text_brut,
-        start_time=seg.start_time,
-        end_time=seg.end_time,
-        speaker=seg.speaker,
-        sequence_number=seg.sequence_number
-    )
-    db.add(db_seg)
+
+def delete_audio_file(db: Session, id_audio: int):
+    audio = get_audio_file_by_id(db, id_audio)
+    if audio:
+        db.delete(audio)
+        db.commit()
+        return True
+    return False
+
+
+def update_audio_status(db: Session, id_audio: int, status: str):
+    audio = db.query(models.FichierAudio).filter(
+        models.FichierAudio.id_audio == id_audio
+    ).first()
+
+    if not audio:
+        return None
+
+    audio.status = status
     db.commit()
-    db.refresh(db_seg)
-    return db_seg
-
-def get_segments_for_meeting(db: Session, meeting_id: int):
-    return (
-        db.query(models.Transcription)
-        .filter(models.Transcription.id_audio == meeting_id)
-        .order_by(models.Transcription.sequence_number.asc())
-        .all()
-    )
-
-# ================================
-# RESUMES / SUMMARIES
-# ================================
-def create_summary(db: Session, summary: schemas.SummarizeCreate):
-    db_sum = models.Resume(
-        id_audio=summary.id_audio,
-        summary_text=summary.summary_text,
-        type_resume=summary.type_resume,
-        speaker=summary.speaker
-    )
-    db.add(db_sum)
-    db.commit()
-    db.refresh(db_sum)
-    return db_sum
-
-def get_summaries_for_meeting(db: Session, meeting_id: int):
-    return (
-        db.query(models.Resume)
-        .filter(models.Resume.id_audio == meeting_id)
-        .all()
-    )
+    db.refresh(audio)
+    return audio

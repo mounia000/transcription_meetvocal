@@ -1,13 +1,14 @@
 # backend/pipeline_service.py
 
-from backend.IA.transcriptiondiarization import transcription_with_diarization
-from backend.IA.extractions import extract_pure_text, extract_by_speaker
-from backend.IA.cleaning import clean_text
-from backend.IA.resume import summarize_text_local, generate_compte_rendu
-from backend.IA.save_pdf import save_files
+from IA.transcriptiondiarization import transcription_with_diarization
+from IA.extractions import extract_pure_text, extract_by_speaker
+from IA.cleaning import clean_text
+from IA.resume import summarize_text_local, generate_compte_rendu
+from IA.save_pdf import save_files
 
 
 def format_speaker_summaries(speaker_summaries: dict) -> str:
+    """Formatte les résumés de chaque intervenant."""
     output = ""
     for speaker, summary in speaker_summaries.items():
         output += f"{speaker}\n"
@@ -17,60 +18,62 @@ def format_speaker_summaries(speaker_summaries: dict) -> str:
 
 def run_pipeline_service(audio_path: str):
     """
-    Pipeline réutilisable par L'API.
+    Pipeline principal utilisé par l'API.
     """
-
     # 1. Transcription + diarisation
     transcription_complete = transcription_with_diarization(audio_path)
 
-    # 2. Extraction texte pur
+    # 2. Extraction du texte pur
     pure_text = extract_pure_text(transcription_complete)
 
-    # 3. Nettoyage général
+    # 3. Nettoyage
     cleaned_text = clean_text(pure_text)
 
-    # 4. Organisation par locuteur + résumé par speaker
+    # 4. Organisation par locuteurs + résumé individuel
     by_speaker = extract_by_speaker(transcription_complete)
     speaker_summaries = {}
 
     for speaker, text in by_speaker.items():
-        cleaned_speaker = clean_text(text)
+        cleaned_speaker_text = clean_text(text)
         try:
-            speaker_summaries[speaker] = summarize_text_local(cleaned_speaker)
-        except:
-            speaker_summaries[speaker] = cleaned_speaker[:200]
+            speaker_summaries[speaker] = summarize_text_local(cleaned_speaker_text)
+        except Exception:
+            speaker_summaries[speaker] = cleaned_speaker_text[:200]
 
-    # 5.Compte-rendu structuré (Groq)
+    # 5. Génération du compte-rendu général
     try:
         compte_rendu = generate_compte_rendu(
             cleaned_text=cleaned_text,
             speakers_summaries=speaker_summaries
         )
     except Exception as e:
-        print(f"⚠️ Erreur Groq → fallback BART : {e}")
+        print(f"⚠️ Erreur Groq : {e}")
         fallback = summarize_text_local(cleaned_text)
         compte_rendu = {
             "compte_rendu_complet": fallback,
             "resume_court": fallback
         }
 
-    # 6. Génération du contenu final
-    sections_content = []
-    
-    # Section 1 : RÉSUMÉ COURT
-    sections_content.append(f"RÉSUMÉ COURT\n{compte_rendu['resume_court']}")
-    
-    # Section 2 : COMPTE-RENDU COMPLET
-    sections_content.append(f"COMPTE-RENDU COMPLET\n{compte_rendu['compte_rendu_complet']}")
-    
-    # Section 3 : RÉSUMÉS PAR INTERVENANT
-    sections_content.append(f"RÉSUMÉS PAR INTERVENANT\n{format_speaker_summaries(speaker_summaries)}")
-    
-    # Section 4 : TRANSCRIPTION
-    sections_content.append(f"TRANSCRIPTION AVEC LOCUTEURS ET TIMESTAMPS\n{transcription_complete}")
-    
-    # Joindre avec le séparateur =====
-    final_content = "\n=====\n".join(sections_content)
+    # 6. Construire le contenu final du PDF
+    sections = []
+
+    # Résumé court
+    sections.append(f"RÉSUMÉ COURT\n{compte_rendu['resume_court']}")
+
+    # Compte-rendu complet
+    sections.append(f"COMPTE-RENDU COMPLET\n{compte_rendu['compte_rendu_complet']}")
+
+    # Résumés par intervenant
+    sections.append(
+        f"RÉSUMÉS PAR INTERVENANT\n{format_speaker_summaries(speaker_summaries)}"
+    )
+
+    # Transcription brute mais structurée
+    sections.append(
+        f"TRANSCRIPTION AVEC LOCUTEURS ET TIMESTAMPS\n{transcription_complete}"
+    )
+
+    final_content = "\n=====\n".join(sections)
 
     # DEBUG
     print("=" * 80)
@@ -81,13 +84,14 @@ def run_pipeline_service(audio_path: str):
     print(final_content[-500:])
     print("=" * 80)
 
-    file_path = save_files(final_content, base_name="compte_rendu_reunion")
+    # 7. Sauvegarde PDF + DOCX (⚠️ ICI — CORRIGÉ)
+    file_paths = save_files(final_content, filename="compte_rendu_reunion")
 
-    # 7. Retour API
+    # 8. Résultat renvoyé à l'API
     return {
         "resume_court": compte_rendu["resume_court"],
         "compte_rendu": compte_rendu["compte_rendu_complet"],
         "speakers": speaker_summaries,
         "cleaned_text": cleaned_text,
-        "output_file": file_path
+        "output_file": file_paths
     }

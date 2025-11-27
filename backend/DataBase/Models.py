@@ -1,9 +1,7 @@
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey, Text,Float,TIMESTAMP
+from sqlalchemy import Column, Integer, String, Float, Text, ForeignKey, TIMESTAMP
 from sqlalchemy.orm import relationship
-from datetime import datetime
-from .database import Base
 from sqlalchemy.sql import func
-
+from .database import Base
 
 
 # ================================
@@ -21,7 +19,7 @@ class Utilisateur(Base):
 
 
 # ================================
-# Table Fichiers_Audio
+# Table Fichiers Audio
 # ================================
 class FichierAudio(Base):
     __tablename__ = "fichiers_audio"
@@ -55,7 +53,7 @@ class Transcription(Base):
     start_time = Column(Float, nullable=False)
     end_time = Column(Float, nullable=False)
     speaker = Column(String(50))
-    sequence_number = Column(Integer, nullable=False)  # IMPORTANT pour l’ordre !
+    sequence_number = Column(Integer, nullable=False)
 
     audio = relationship("FichierAudio", back_populates="transcriptions")
 
@@ -71,6 +69,6 @@ class Resume(Base):
 
     summary_text = Column(Text, nullable=False)
     type_resume = Column(String(50), nullable=False)  # general | par_speaker
-    speaker = Column(String(50))  # utilisé seulement si type_resume='par_speaker'
+    speaker = Column(String(50))
 
     audio = relationship("FichierAudio", back_populates="resumes")

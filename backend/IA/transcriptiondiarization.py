@@ -1,31 +1,34 @@
 # backend/IA/transcriptiondiarization.py
-
 import os
 import subprocess
-from dotenv import load_dotenv
-from groq import Groq
-from pyannote.audio import Pipeline
 import torch
+import requests
+from dotenv import load_dotenv
+from pyannote.audio import Pipeline
 
-# Charger les variables d'environnement
+# ============================================================
+# 🔐 Chargement des variables d'environnement
+# ============================================================
 load_dotenv()
 
-groq_api_key = os.getenv("GROQ_API_KEY")
-hf_token = os.getenv("HUGGINGFACE_TOKEN")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+HF_TOKEN = os.getenv("HUGGINGFACE_TOKEN")
 
-if not groq_api_key or not hf_token:
-    raise ValueError("❌ Clés API manquantes (Groq ou Hugging Face)")
+if not GROQ_API_KEY:
+    raise ValueError("❌ Clé API Groq manquante (.env)")
+if not HF_TOKEN:
+    raise ValueError("❌ Token HuggingFace manquant (.env)")
 
 
-# -------------------------------
-# 1️⃣ Convertir audio → WAV
-# -------------------------------
-
-def convert_to_wav(audio_path):
-    base, ext = os.path.splitext(audio_path)
+# ============================================================
+# 🎵 Conversion audio → WAV
+# ============================================================
+def convert_to_wav(audio_path: str) -> str:
+    base, _ = os.path.splitext(audio_path)
     wav_path = base + ".wav"
 
-    command = [
+    print(f"🎧 Conversion audio → {wav_path}")
+    cmd = [
         "ffmpeg", "-y",
         "-i", audio_path,
         "-ar", "16000",
@@ -33,229 +36,177 @@ def convert_to_wav(audio_path):
         wav_path
     ]
 
-    result = subprocess.run(command, capture_output=True, text=True)
-
+    result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        raise Exception(f"❌ FFmpeg error: {result.stderr}")
+        raise Exception(f"❌ Erreur FFmpeg : {result.stderr.strip()}")
 
     return wav_path
 
 
-# ---------------------------
-# 2️⃣ Charger pyannote
-# ---------------------------
-
+# ============================================================
+# 🧠 Initialisation du pipeline Pyannote
+# ============================================================
 _pipeline = None
 
 def get_pipeline():
     global _pipeline
     if _pipeline is None:
-        _pipeline = Pipeline.from_pretrained(
-            "pyannote/speaker-diarization",  # Version stable
-            use_auth_token=hf_token
-        )
-        
-        # Paramètres optimisés pour réduire la confusion
+        print("🔹 Chargement du pipeline Pyannote (cela peut prendre un moment)...")
+        _pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization", use_auth_token=HF_TOKEN)
+
         if torch.cuda.is_available():
+            print("✅ GPU détecté → utilisation de CUDA")
             _pipeline.to(torch.device("cuda"))
-        
+        else:
+            print("⚙️ Utilisation du CPU")
     return _pipeline
 
 
-# -------------------------------
-# 3️⃣ Fusion améliorée avec score de confiance
-# -------------------------------
-
-def format_time(seconds):
+# ============================================================
+# ⏱️ Fonctions utilitaires
+# ============================================================
+def format_time(seconds: float) -> str:
     minutes = int(seconds // 60)
     secs = seconds % 60
     return f"{minutes:02d}:{secs:04.1f}"
 
 
 def calculate_overlap(start1, end1, start2, end2):
-    """Calcule le pourcentage de chevauchement entre deux segments"""
     overlap_start = max(start1, start2)
     overlap_end = min(end1, end2)
-    
     if overlap_start >= overlap_end:
         return 0.0
-    
-    overlap_duration = overlap_end - overlap_start
-    segment_duration = end1 - start1
-    
-    return overlap_duration / segment_duration if segment_duration > 0 else 0.0
+    return (overlap_end - overlap_start) / (end1 - start1 + 1e-6)
 
 
 def match_speaker_to_text(diar_segments, text_segments, overlap_threshold=0.5):
-    """
-    Amélioration de l'attribution des locuteurs avec:
-    - Calcul du chevauchement temporel
-    - Gestion des segments ambigus
-    - Continuité des locuteurs
-    """
     result = []
     previous_speaker = None
-    
     detected_speakers = sorted(set(d["speaker"] for d in diar_segments))
 
     for txt in text_segments:
-        start = txt["start"]
-        end = txt["end"]
-        text = txt["text"].strip()
-
-        # Trouver tous les speakers qui chevauchent ce segment
+        start, end, text = txt["start"], txt["end"], txt["text"].strip()
         candidates = []
-        
+
         for d in diar_segments:
             overlap = calculate_overlap(start, end, d["start"], d["end"])
-            
             if overlap > 0:
                 continuity_bonus = 0.2 if d["speaker"] == previous_speaker else 0.0
-                score = overlap + continuity_bonus
-                
                 candidates.append({
                     "speaker": d["speaker"],
-                    "score": score,
+                    "score": overlap + continuity_bonus,
                     "overlap": overlap
                 })
-        
-        
+
         if candidates:
-            # Trier par score décroissant
             candidates.sort(key=lambda x: x["score"], reverse=True)
-            best_candidate = candidates[0]
-            
-            # Vérifier si le chevauchement est suffisant
-            if best_candidate["overlap"] >= overlap_threshold:
-                speaker = best_candidate["speaker"]
+            best = candidates[0]
+            if best["overlap"] >= overlap_threshold:
+                speaker = best["speaker"]
             else:
-                # Si chevauchement faible, privilégier la continuité
-                speaker = previous_speaker if previous_speaker else best_candidate["speaker"]
+                speaker = previous_speaker or best["speaker"]
         else:
-            # Aucun chevauchement: utiliser le speaker précédent ou le plus proche
-            if previous_speaker:
-                speaker = previous_speaker
-            else:
-                # Trouver le speaker le plus proche temporellement
-                min_distance = float('inf')
-                closest_speaker = detected_speakers[0] if detected_speakers else "SPEAKER_00"
-                
-                for d in diar_segments:
-                    distance = min(abs(d["start"] - start), abs(d["end"] - end))
-                    if distance < min_distance:
-                        min_distance = distance
-                        closest_speaker = d["speaker"]
-                
-                speaker = closest_speaker
+            speaker = previous_speaker or (detected_speakers[0] if detected_speakers else "SPEAKER_00")
 
         previous_speaker = speaker
-        
-        result.append(
-            f"[{format_time(start)} - {format_time(end)}] [{speaker}] {text}"
-        )
+        result.append(f"[{format_time(start)} - {format_time(end)}] [{speaker}] {text}")
 
     return result
 
 
-def merge_consecutive_segments(formatted_segments):
-    """
-    Fusionne les segments consécutifs du même locuteur
-    """
-    if not formatted_segments:
+def merge_consecutive_segments(segments):
+    if not segments:
         return []
-    
     merged = []
-    current_speaker = None
-    current_start = None
-    current_texts = []
-    
-    for line in formatted_segments:
-        # Parser la ligne: [time] [speaker] text
+    current_speaker, current_start, current_texts = None, None, []
+
+    for line in segments:
         parts = line.split("] ", 2)
         if len(parts) < 3:
-            merged.append(line)
             continue
-        
-        time_range = parts[0][1:]  
-        speaker = parts[1][1:]      
+        time_range = parts[0][1:]
+        speaker = parts[1][1:]
         text = parts[2]
-        
         start_time = time_range.split(" - ")[0]
-        
+
         if speaker == current_speaker:
-            # Même locuteur: ajouter le texte
             current_texts.append(text)
         else:
-            # Nouveau locuteur: sauvegarder le segment précédent
             if current_speaker:
-                merged_text = " ".join(current_texts)
-                merged.append(f"[{current_start} - ...] [{current_speaker}] {merged_text}")
-            
-            # Commencer un nouveau segment
-            current_speaker = speaker
-            current_start = start_time
-            current_texts = [text]
-    
-    # Ajouter le dernier segment
-    if current_speaker and current_texts:
-        merged_text = " ".join(current_texts)
-        merged.append(f"[{current_start} - ...] [{current_speaker}] {merged_text}")
-    
+                merged.append(f"[{current_start} - ...] [{current_speaker}] {' '.join(current_texts)}")
+            current_speaker, current_start, current_texts = speaker, start_time, [text]
+
+    if current_speaker:
+        merged.append(f"[{current_start} - ...] [{current_speaker}] {' '.join(current_texts)}")
     return merged
 
 
-# --------------------------
-# 4️⃣ Fonction principale
-# --------------------------
+# ============================================================
+# 🧩 Transcription directe via API HTTP Groq (contournement du bug)
+# ============================================================
+def transcribe_with_groq(file_path: str):
+    """Envoie le fichier audio directement à l’API Groq (sans SDK buggué)."""
+    print("🧠 Transcription via API HTTP Groq...")
+    url = "https://api.groq.com/openai/v1/audio/transcriptions"
 
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}"
+    }
+
+    with open(file_path, "rb") as f:
+        files = {
+            "file": (os.path.basename(file_path), f, "audio/wav")
+        }
+        data = {
+            "model": "whisper-large-v3-turbo",
+            "response_format": "verbose_json",
+            "timestamp_granularities[]": "segment",
+            "language": "fr"
+        }
+
+        response = requests.post(url, headers=headers, data=data, files=files)
+        if response.status_code != 200:
+            raise RuntimeError(f"❌ Erreur API Groq : {response.status_code} {response.text}")
+
+        result = response.json()
+        return result["segments"]
+
+
+# ============================================================
+# 🎙️ Fonction principale
+# ============================================================
 def transcription_with_diarization(audio_file, min_speakers=None, max_speakers=None, merge_segments=True):
-    """
-    Transcription + diarisation
-    
-    Args:
-        audio_file: Chemin vers le fichier audio
-        min_speakers: Nombre minimum de locuteurs attendus
-        max_speakers: Nombre maximum de locuteurs attendus
-        merge_segments: Fusionner les segments consécutifs du même locuteur
-    """
+    print(f"🎧 Traitement du fichier : {audio_file}")
 
-    # 1. Convertir en wav
     wav_path = convert_to_wav(audio_file)
+    print(f"✅ Converti en WAV → {wav_path}")
 
-    # 2. Détection des speakers
     pipeline = get_pipeline()
-    
-    # Configurer les paramètres de diarisation
-    diarization_params = {}
+    diar_params = {}
     if min_speakers:
-        diarization_params["min_speakers"] = min_speakers
+        diar_params["min_speakers"] = min_speakers
     if max_speakers:
-        diarization_params["max_speakers"] = max_speakers
-    
-    diarization = pipeline(wav_path, **diarization_params)
+        diar_params["max_speakers"] = max_speakers
 
+    print("🔎 Diarisation en cours...")
+    diarization = pipeline(wav_path, **diar_params)
     diar_segments = [
         {"start": t.start, "end": t.end, "speaker": s}
         for t, _, s in diarization.itertracks(yield_label=True)
     ]
+    print(f"✅ Diarisation terminée ({len(diar_segments)} segments détectés)")
 
-    # 3. Transcription Groq
-    client = Groq(api_key=groq_api_key)
+    # Étape 3 : Transcription via API HTTP
+    try:
+        text_segments = transcribe_with_groq(wav_path)
+        print(f"✅ Transcription terminée ({len(text_segments)} segments texte)")
+    except Exception as e:
+        print(f"❌ Erreur transcription : {e}")
+        raise
 
-    with open(wav_path, "rb") as file:
-        transcription = client.audio.transcriptions.create(
-            file=file,
-            model="whisper-large-v3-turbo",
-            response_format="verbose_json",
-            timestamp_granularities=["segment"],
-            language="fr"
-        )
-
-    # 4. Fusion
-    fusion = match_speaker_to_text(diar_segments, transcription.segments)
-    
-    # 5.Fusionner les segments consécutifs
+    fusion = match_speaker_to_text(diar_segments, text_segments)
     if merge_segments:
         fusion = merge_consecutive_segments(fusion)
 
+    print(f"📝 Fusion finale : {len(fusion)} lignes générées")
     return "\n".join(fusion)

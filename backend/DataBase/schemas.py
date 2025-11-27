@@ -1,23 +1,28 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from typing import Optional
 
 # ================================
 # UTILISATEURS
 # ================================
-# Users
-class UserCreate(BaseModel):
+class UserBase(BaseModel):
     name: str
+    email: str
+
+class UserCreate(UserBase):
+    password: str
+
+class UserLogin(BaseModel):
     email: str
     password: str
 
-class UserRead(BaseModel):
+class UserRead(UserBase):
     id_user: int
-    name: str
-    email: str
-
     model_config = {"from_attributes": True}
 
-# Audio files (Meetings)
+
+# ================================
+# FICHIERS AUDIO
+# ================================
 class AudioFileCreate(BaseModel):
     id_user: int
     title: str
@@ -30,7 +35,10 @@ class AudioFileRead(AudioFileCreate):
     id_audio: int
     model_config = {"from_attributes": True}
 
-# Transcription segments
+
+# ================================
+# SEGMENTS
+# ================================
 class TranscriptionSegmentCreate(BaseModel):
     id_audio: int
     text_brut: str
@@ -43,7 +51,10 @@ class TranscriptionSegmentRead(TranscriptionSegmentCreate):
     id_transcription: int
     model_config = {"from_attributes": True}
 
-# Summaries
+
+# ================================
+# RÉSUMÉS
+# ================================
 class SummarizeCreate(BaseModel):
     id_audio: int
     summary_text: str

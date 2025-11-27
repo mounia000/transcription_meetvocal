@@ -1,32 +1,54 @@
-from fastapi import FastAPI, Depends, HTTPException, File, UploadFile
+# backend/api.py
+
+from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
-from backend.DataBase import models, schemas, crud
-from backend.DataBase import database
-from backend.DataBase.database import SessionLocal, engine
-import os
-import shutil
+from DataBase import models, schemas, crud
+from DataBase.database import engine, SessionLocal
+from passlib.context import CryptContext
+import os, shutil, time
+from pipeline_service import run_pipeline_service
 
-#from .main import pipeline as existing_pipeline
-from .pipeline_service import run_pipeline_service
 
+# =====================================================================
+# INITIALISATION
+# =====================================================================
 models.Base.metadata.create_all(bind=engine)
+app = FastAPI(title="MeetRecap - API de Transcription")
 
-app = FastAPI(title="Transcription MeetVocal API (FastAPI port)")
 
+# =====================================================================
 # CORS
+# =====================================================================
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Créer le dossier uploads s'il n'existe pas
-UPLOAD_DIR = "backend/IA/audio/uploads"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+# =====================================================================
+# PASSWORD
+# =====================================================================
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def verify_password(plain, hashed):
+    try:
+        return pwd_context.verify(plain, hashed)
+    except:
+        return False
+
+def hash_password(p):
+    return pwd_context.hash(p[:72])
+
+
+# =====================================================================
+# DATABASE
+# =====================================================================
 def get_db():
     db = SessionLocal()
     try:
@@ -34,107 +56,159 @@ def get_db():
     finally:
         db.close()
 
-@app.get("/health")
-def health():
-    return {"status": "ok"}
 
-# Users
-@app.post("/users/", response_model=schemas.UserRead)
-def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
-    db_user = crud.create_user(db, user)
-    return db_user
+# =====================================================================
+# CHEMINS DES DOSSIERS
+# =====================================================================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+UPLOAD_DIR = os.path.join(BASE_DIR, "IA", "audio", "uploads")
 
-@app.get("/users/", response_model=list[schemas.UserRead])
-def list_users(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    return crud.get_users(db, skip=skip, limit=limit)
+EXPORT_DIR = r"D:\meetrecap\transcription_meetvocal\backend\IA\exports"
 
-# Meetings
-@app.post("/meetings/", response_model=schemas.AudioFileRead)
-def create_meeting(meeting: schemas.AudioFileCreate, db: Session = Depends(get_db)):
-    return crud.create_audio_file(db, meeting)
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+os.makedirs(EXPORT_DIR, exist_ok=True)
 
-@app.get("/meetings/", response_model=list[schemas.AudioFileRead])
-def list_meetings(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    return crud.get_audio_files(db, skip=skip, limit=limit)
+app.mount("/exports", StaticFiles(directory=EXPORT_DIR), name="exports")
 
-# Transcription segments
-@app.post("/segments/", response_model=schemas.TranscriptionSegmentRead)
-def create_segment(seg: schemas.TranscriptionSegmentCreate, db: Session = Depends(get_db)):
-    return crud.create_segment(db, seg)
+# =====================================================================
+# AUTH
+# =====================================================================
+@app.post("/register")
+def register(name: str = Form(...), email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
+    if crud.get_user_by_email(db, email):
+        raise HTTPException(400, "Cet email est déjà utilisé.")
 
-@app.get("/meetings/{meeting_id}/segments", response_model=list[schemas.TranscriptionSegmentRead])
-def get_segments(meeting_id: int, db: Session = Depends(get_db)):
-    return crud.get_segments_for_meeting(db, meeting_id)
+    user = crud.create_user(
+        db,
+        schemas.UserCreate(
+            name=name,
+            email=email,
+            password=hash_password(password)
+        )
+    )
 
-# Summaries
-@app.post("/meetings/{meeting_id}/summaries", response_model=schemas.SummarizeRead)
-def create_summary(meeting_id: int, summary: schemas.SummarizeCreate, db: Session = Depends(get_db)):
-    if meeting_id != summary.meeting_id:
-        raise HTTPException(status_code=400, detail="meeting_id mismatch")
-    return crud.create_summary(db, summary)
+    return {"message": "OK", "user_id": user.id_user}
 
-@app.get("/meetings/{meeting_id}/summaries", response_model=list[schemas.SummarizeRead])
-def get_summaries(meeting_id: int, db: Session = Depends(get_db)):
-    return crud.get_summaries_for_meeting(db, meeting_id)
 
-# 🆕 Upload de fichier audio
-@app.post("/upload-audio/")
-async def upload_audio(file: UploadFile = File(...)):
-    """Upload un fichier audio depuis le PC de l'utilisateur"""
+@app.post("/login")
+def login(email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
+    user = crud.get_user_by_email(db, email)
+
+    if not user:
+        raise HTTPException(401, "Utilisateur introuvable")
+
+    if not verify_password(password, user.password):
+        raise HTTPException(401, "Mot de passe incorrect")
+
+    return {
+        "message": "Connexion réussie",
+        "user": {"id": user.id_user, "name": user.name, "email": user.email}
+    }
+
+
+# =====================================================================
+# UPLOAD AUDIO + PIPELINE
+# =====================================================================
+@app.post("/upload")
+async def upload_audio(
+    id_user: int = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+
+    allowed = [".mp3", ".wav", ".m4a", ".ogg", ".flac"]
+    ext = os.path.splitext(file.filename)[1].lower()
+
+    if ext not in allowed:
+        raise HTTPException(400, "Format de fichier non supporté")
+
+    timestamp = int(time.time())
+    safe_name = f"{timestamp}_{file.filename}"
+    file_path = os.path.join(UPLOAD_DIR, safe_name)
+
+    # Sauvegarde audio
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    # ENREGISTRER AVANT TRAITEMENT
+    new_audio = crud.create_audio_file(
+        db,
+        schemas.AudioFileCreate(
+            id_user=id_user,
+            title=file.filename,
+            file_path=file_path,
+            status="processing"
+        )
+    )
+
+    print(f"🚀 Pipeline lancé pour : {file.filename}")
+
     try:
-        # Vérifier le type de fichier
-        allowed_extensions = ['.mp3', '.wav', '.m4a', '.ogg', '.flac']
-        file_ext = os.path.splitext(file.filename)[1].lower()
-        
-        if file_ext not in allowed_extensions:
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Type de fichier non supporté. Utilisez: {', '.join(allowed_extensions)}"
-            )
-        
-        # Créer un nom de fichier unique
-        import time
-        timestamp = int(time.time())
-        safe_filename = f"{timestamp}_{file.filename}"
-        file_path = os.path.join(UPLOAD_DIR, safe_filename)
-        
-        # Sauvegarder le fichier
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-        
-        return {
-            "status": "success",
-            "message": "Fichier uploadé avec succès",
-            "filename": safe_filename,
-            "path": file_path
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        result = run_pipeline_service(file_path)
 
-# 🆕Pipeline avec upload
-@app.post("/pipeline-upload/")
-async def run_pipeline_upload(file: UploadFile = File(...)):
-    try:
-        upload_result = await upload_audio(file)
-        audio_path = upload_result["path"]
-
-        result = run_pipeline_service(audio_path)
-
-        return {
-            "status": "success",
-            "audio": audio_path,
-            "pipeline_result": result
-        }
+        crud.update_audio_status(db, new_audio.id_audio, "completed")
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print("❌ ERREUR PIPELINE :", e)
+        crud.update_audio_status(db, new_audio.id_audio, "failed")
+        raise HTTPException(500, f"Erreur pipeline : {e}")
+
+    pdf_url = "http://127.0.0.1:8000/exports/compte_rendu_reunion.pdf"
+    doc_url = "http://127.0.0.1:8000/exports/compte_rendu_reunion.docx"
+
+    return {
+        "message": "Traitement OK",
+        "resume_court": result["resume_court"],
+        "compte_rendu": result["compte_rendu"],
+        "pdf_url": pdf_url,
+        "word_url": doc_url,
+        "audio": file.filename,
+        "id_audio": new_audio.id_audio
+    }
 
 
-@app.post("/pipeline/")
-def run_pipeline(audio_path: str):
-    """Run the original pipeline from backend/main.py"""
-    try:
-        run_pipeline_service(audio_path)
-        return {"status": "pipeline started", "audio": audio_path}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+
+# =====================================================================
+# LISTE FICHIERS (FILTRÉS PAR UTILISATEUR)
+# =====================================================================
+@app.get("/fichiers")
+def fichiers(id_user: int, db: Session = Depends(get_db)):
+    return db.query(models.FichierAudio).filter(
+        models.FichierAudio.id_user == id_user
+    ).order_by(models.FichierAudio.date_upload.desc()).all()
+
+
+# =====================================================================
+# DETAIL FICHIER
+# =====================================================================
+@app.get("/fichiers/{id}/detail")
+def fichier_detail(id: int, db: Session = Depends(get_db)):
+    f = crud.get_audio_file_by_id(db, id)
+
+    if not f:
+        raise HTTPException(404, "Fichier introuvable")
+
+    return {
+        "id_audio": f.id_audio,
+        "title": f.title,
+        "file_path": f.file_path,
+        "status": f.status,
+        "date_upload": f.date_upload,
+        "user": {
+            "name": f.user.name,
+            "email": f.user.email
+        },
+        "pdf_url": "http://127.0.0.1:8000/exports/compte_rendu_reunion.pdf",
+        "word_url": "http://127.0.0.1:8000/exports/compte_rendu_reunion.docx",
+    }
+
+
+# =====================================================================
+# SUPPRESSION
+# =====================================================================
+@app.delete("/fichiers/{id_audio}")
+def delete_fichier(id_audio: int, db: Session = Depends(get_db)):
+    deleted = crud.delete_audio_file(db, id_audio)
+    if not deleted:
+        raise HTTPException(404, "Fichier introuvable")
+    return {"message": "Fichier supprimé"}
