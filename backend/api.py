@@ -5,11 +5,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
-from DataBase import models, schemas, crud
-from DataBase.database import engine, SessionLocal
-from passlib.context import CryptContext
+from backend.DataBase import models, schemas, crud
+from backend.DataBase.database import engine, SessionLocal
+import bcrypt
 import os, shutil, time
-from pipeline_service import run_pipeline_service
+from backend.pipeline_service import run_pipeline_service
 
 
 # =====================================================================
@@ -32,18 +32,28 @@ app.add_middleware(
 
 
 # =====================================================================
-# PASSWORD
+# PASSWORD - Utilisation directe de bcrypt
 # =====================================================================
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-def verify_password(plain, hashed):
+def verify_password(plain: str, hashed: str) -> bool:
+    """Vérifie un mot de passe contre son hash."""
     try:
-        return pwd_context.verify(plain, hashed)
+        plain_bytes = plain.encode('utf-8')
+        # Tronquer à 72 octets si nécessaire
+        if len(plain_bytes) > 72:
+            plain_bytes = plain_bytes[:72]
+        return bcrypt.checkpw(plain_bytes, hashed.encode('utf-8'))
     except:
         return False
 
-def hash_password(p):
-    return pwd_context.hash(p[:72])
+def hash_password(password: str) -> str:
+    """Hash un mot de passe avec bcrypt."""
+    password_bytes = password.encode('utf-8')
+    # Tronquer à 72 octets pour bcrypt
+    if len(password_bytes) > 72:
+        password_bytes = password_bytes[:72]
+    salt = bcrypt.gensalt()
+    hashed = bcrypt.hashpw(password_bytes, salt)
+    return hashed.decode('utf-8')
 
 
 # =====================================================================
@@ -63,7 +73,7 @@ def get_db():
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_DIR = os.path.join(BASE_DIR, "IA", "audio", "uploads")
 
-EXPORT_DIR = r"D:\meetrecap\transcription_meetvocal\backend\IA\exports"
+EXPORT_DIR = os.path.join(BASE_DIR, "IA", "exports")
 
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(EXPORT_DIR, exist_ok=True)
@@ -146,6 +156,35 @@ async def upload_audio(
     try:
         result = run_pipeline_service(file_path)
 
+        # Sauvegarder le résumé court
+        if "resume_court" in result and result["resume_court"]:
+            crud.create_resume(
+                db, 
+                new_audio.id_audio, 
+                result["resume_court"], 
+                "resume_court"
+            )
+
+        # Sauvegarder le compte rendu complet
+        if "compte_rendu" in result and result["compte_rendu"]:
+            crud.create_resume(
+                db,
+                new_audio.id_audio,
+                result["compte_rendu"],
+                "compte_rendu_complet"
+            )
+
+        # Sauvegarder les résumés par speaker
+        if "speakers" in result:
+            for speaker, summary in result["speakers"].items():
+                crud.create_resume(
+                    db,
+                    new_audio.id_audio,
+                    summary,
+                    "par_speaker",
+                    speaker
+                )
+
         crud.update_audio_status(db, new_audio.id_audio, "completed")
 
     except Exception as e:
@@ -188,18 +227,40 @@ def fichier_detail(id: int, db: Session = Depends(get_db)):
     if not f:
         raise HTTPException(404, "Fichier introuvable")
 
+    # Récupérer les résumés
+    resumes = []
+    for r in f.resumes:
+        resumes.append({
+            "type": r.type_resume,
+            "speaker": r.speaker,
+            "text": r.summary_text
+        })
+
+    # Récupérer les transcriptions
+    transcriptions = []
+    for t in f.transcriptions:
+        transcriptions.append({
+            "speaker": t.speaker,
+            "text": t.text_brut,
+            "start_time": t.start_time,
+            "end_time": t.end_time
+        })
+
     return {
         "id_audio": f.id_audio,
         "title": f.title,
         "file_path": f.file_path,
         "status": f.status,
         "date_upload": f.date_upload,
+        "duree": f.duration,
         "user": {
             "name": f.user.name,
             "email": f.user.email
         },
-        "pdf_url": "http://127.0.0.1:8000/exports/compte_rendu_reunion.pdf",
-        "word_url": "http://127.0.0.1:8000/exports/compte_rendu_reunion.docx",
+        "pdf_url": "http://localhost:8000/exports/compte_rendu_reunion.pdf",
+        "word_url": "http://localhost:8000/exports/compte_rendu_reunion.docx",
+        "resumes": resumes,
+        "transcriptions": transcriptions
     }
 
 
@@ -212,3 +273,31 @@ def delete_fichier(id_audio: int, db: Session = Depends(get_db)):
     if not deleted:
         raise HTTPException(404, "Fichier introuvable")
     return {"message": "Fichier supprimé"}
+
+
+# =====================================================================
+# TÉLÉCHARGEMENT FORCÉ DES FICHIERS
+# =====================================================================
+@app.get("/download/pdf")
+def download_pdf():
+    pdf_path = os.path.join(EXPORT_DIR, "compte_rendu_reunion.pdf")
+    if not os.path.exists(pdf_path):
+        raise HTTPException(404, "PDF non trouvé")
+    return FileResponse(
+        pdf_path,
+        media_type="application/pdf",
+        filename="compte_rendu_reunion.pdf",
+        headers={"Content-Disposition": "attachment; filename=compte_rendu_reunion.pdf"}
+    )
+
+@app.get("/download/word")
+def download_word():
+    word_path = os.path.join(EXPORT_DIR, "compte_rendu_reunion.docx")
+    if not os.path.exists(word_path):
+        raise HTTPException(404, "DOCX non trouvé")
+    return FileResponse(
+        word_path,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        filename="compte_rendu_reunion.docx",
+        headers={"Content-Disposition": "attachment; filename=compte_rendu_reunion.docx"}
+    )

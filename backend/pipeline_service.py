@@ -1,10 +1,7 @@
 # backend/pipeline_service.py
 
-from IA.transcriptiondiarization import transcription_with_diarization
-from IA.extractions import extract_pure_text, extract_by_speaker
-from IA.cleaning import clean_text
-from IA.resume import summarize_text_local, generate_compte_rendu
-from IA.save_pdf import save_files
+# Imports retardés pour accélérer le démarrage de l'API
+# Les modules lourds (pyannote, transformers) seront chargés uniquement lors de leur utilisation
 
 
 def format_speaker_summaries(speaker_summaries: dict) -> str:
@@ -20,6 +17,13 @@ def run_pipeline_service(audio_path: str):
     """
     Pipeline principal utilisé par l'API.
     """
+    # Import lazy pour éviter le chargement au démarrage de l'API
+    from backend.IA.transcriptiondiarization import transcription_with_diarization
+    from backend.IA.extractions import extract_pure_text, extract_by_speaker
+    from backend.IA.cleaning import clean_text
+    from backend.IA.resume import summarize_text_local, generate_compte_rendu
+    from backend.IA.save_pdf import save_files
+    
     # 1. Transcription + diarisation
     transcription_complete = transcription_with_diarization(audio_path)
 

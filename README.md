@@ -221,5 +221,7 @@ GET /health
 - Langues : Toutes (Whisper supporte 99 langues)
 
 
+## 👥 Auteurs
+👩‍💻Youssouf  👩‍💻 Mounia 👩‍💻 Hafssa 👩‍💻 MANAL
 
-**Fait par  Youssouf,Hafsa,Mounia,Manal**
+Projet académique : MeetRecap – Application de transcription et résumé automatique de réunions
