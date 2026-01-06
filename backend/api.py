@@ -278,26 +278,54 @@ def delete_fichier(id_audio: int, db: Session = Depends(get_db)):
 # =====================================================================
 # TÉLÉCHARGEMENT FORCÉ DES FICHIERS
 # =====================================================================
-@app.get("/download/pdf")
-def download_pdf():
-    pdf_path = os.path.join(EXPORT_DIR, "compte_rendu_reunion.pdf")
+@app.get("/download/pdf/{id_audio}")
+def download_pdf(id_audio: int, db: Session = Depends(get_db)):
+    # Vérifier que le fichier audio existe
+    audio = crud.get_audio_file_by_id(db, id_audio)
+    if not audio:
+        raise HTTPException(404, "Fichier audio introuvable")
+    
+    # Chercher le fichier PDF (nom basé sur l'ID ou nom générique)
+    pdf_path = os.path.join(EXPORT_DIR, f"compte_rendu_{id_audio}.pdf")
+    
+    # Si le fichier spécifique n'existe pas, utiliser le fichier générique
     if not os.path.exists(pdf_path):
-        raise HTTPException(404, "PDF non trouvé")
+        pdf_path = os.path.join(EXPORT_DIR, "compte_rendu_reunion.pdf")
+    
+    if not os.path.exists(pdf_path):
+        raise HTTPException(404, "PDF non trouvé. Le document n'a peut-être pas encore été généré.")
+    
+    filename = f"compte_rendu_{audio.title.replace(' ', '_')}.pdf" if audio.title else "compte_rendu_reunion.pdf"
+    
     return FileResponse(
         pdf_path,
         media_type="application/pdf",
-        filename="compte_rendu_reunion.pdf",
-        headers={"Content-Disposition": "attachment; filename=compte_rendu_reunion.pdf"}
+        filename=filename,
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
 
-@app.get("/download/word")
-def download_word():
-    word_path = os.path.join(EXPORT_DIR, "compte_rendu_reunion.docx")
+@app.get("/download/word/{id_audio}")
+def download_word(id_audio: int, db: Session = Depends(get_db)):
+    # Vérifier que le fichier audio existe
+    audio = crud.get_audio_file_by_id(db, id_audio)
+    if not audio:
+        raise HTTPException(404, "Fichier audio introuvable")
+    
+    # Chercher le fichier DOCX (nom basé sur l'ID ou nom générique)
+    word_path = os.path.join(EXPORT_DIR, f"compte_rendu_{id_audio}.docx")
+    
+    # Si le fichier spécifique n'existe pas, utiliser le fichier générique
     if not os.path.exists(word_path):
-        raise HTTPException(404, "DOCX non trouvé")
+        word_path = os.path.join(EXPORT_DIR, "compte_rendu_reunion.docx")
+    
+    if not os.path.exists(word_path):
+        raise HTTPException(404, "DOCX non trouvé. Le document n'a peut-être pas encore été généré.")
+    
+    filename = f"compte_rendu_{audio.title.replace(' ', '_')}.docx" if audio.title else "compte_rendu_reunion.docx"
+    
     return FileResponse(
         word_path,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        filename="compte_rendu_reunion.docx",
-        headers={"Content-Disposition": "attachment; filename=compte_rendu_reunion.docx"}
+        filename=filename,
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
